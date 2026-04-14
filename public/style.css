@@ -35,3 +35,13 @@ h1 {
 h2 {
   margin-top: 0;
 }
+
+#dashboard-alert {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f8fafc;
+  min-height: 24px;
+}

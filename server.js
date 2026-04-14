@@ -1,18 +1,58 @@
 const express = require("express");
-const path = require("path");
-
 const app = express();
-const PORT = 4000;
 
-// Serve static files from /public
-app.use(express.static(path.join(__dirname, "public")));
+const parser = require("./src/parser");
+const state = require("./src/state");
+const logic = require("./src/logic");
 
-// Root route
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+app.use(express.json());
+app.use(express.static("public"));
+
+app.post("/webhook", (req, res) => {
+  try {
+    const parsed = parser.parse(req.body);
+    console.log("[PARSED EVENT]", parsed);
+
+    state.addEvent(parsed);
+
+    const nextState = logic.getNextState(parsed.event);
+
+    if (nextState) {
+      state.updateSetup(
+        parsed.symbol,
+        parsed.timeframe,
+        parsed.event,
+        nextState
+      );
+    } else {
+      console.log(`[STATE] No mapping for event: ${parsed.event}`);
+    }
+
+    res.status(200).json({
+      ok: true,
+      message: "Webhook received successfully"
+    });
+  } catch (error) {
+    console.error("[ERROR]", error.message);
+
+    res.status(400).json({
+      ok: false,
+      error: error.message
+    });
+  }
 });
 
-// Start server
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Co-Trader Engine V0 running on http://0.0.0.0:${PORT}`);
+// simple debug endpoint
+app.get("/state", (req, res) => {
+  const currentState = state.getState();
+  const reactions = state.getReactions();
+
+  res.json({
+    ...currentState,
+    reactions
+  });
+});
+
+app.listen(4000, () => {
+  console.log("Server running on http://localhost:4000");
 });

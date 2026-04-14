@@ -1,3 +1,87 @@
+const { getDecisionFromSetupState } = require("./logic");
+const state = {
+  latestEvent: null,
+  history: [],
+  setups: {}
+};
+
+function getKey(symbol, timeframe) {
+  return `${symbol}_${timeframe}`;
+}
+
+function addEvent(event) {
+  state.latestEvent = event;
+  state.history.push(event);
+}
+
+function getSetup(symbol, timeframe) {
+  const key = getKey(symbol, timeframe);
+  return state.setups[key] || null;
+}
+
+function isTransitionAllowed(event, currentState) {
+  if (event === "choch_detected") {
+    return true;
+  }
+
+  if (event === "ob_tap") {
+    if (currentState === "waiting_for_ob_tap") {
+      return true;
+    }
+
+    console.log(
+      `[RULE] Invalid sequence: ob_tap received while current state is ${currentState}`
+    );
+    return false;
+  }
+
+  console.log(`[RULE] Unknown event ignored: ${event}`);
+  return false;
+}
+
+function updateSetup(symbol, timeframe, event, newSetupState) {
+  const key = getKey(symbol, timeframe);
+  const previousState = state.setups[key] || null;
+
+  const allowed = isTransitionAllowed(event, previousState);
+
+  if (!allowed) {
+    console.log(
+      `[STATE] Blocked transition for ${symbol} ${timeframe}: event=${event}, current=${previousState}, attempted=${newSetupState}`
+    );
+    return;
+  }
+
+  state.setups[key] = newSetupState;
+
+  console.log(
+    `[STATE] ${symbol} ${timeframe}: ${previousState} -> ${newSetupState}`
+  );
+}
+
+function getState() {
+  return state;
+}
+
+function getReactions() {
+  const reactions = {};
+
+  for (const key in state.setups) {
+    const setupState = state.setups[key];
+
+    reactions[key] = {
+      setupState,
+      decision: getDecisionFromSetupState(setupState)
+    };
+  }
+
+  return reactions;
+}
+
 module.exports = {
-  placeholder: "State module ready for next step"
+  addEvent,
+  getSetup,
+  updateSetup,
+  getState,
+  getReactions
 };
