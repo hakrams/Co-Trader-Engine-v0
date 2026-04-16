@@ -1,12 +1,33 @@
 const { getDecisionFromSetupState } = require("./logic");
+
 const state = {
   latestEvent: null,
   history: [],
-  setups: {}
+  setups: {},
+  rawEvents: [],
+  latestRawEvent: null
 };
 
 function getKey(symbol, timeframe) {
   return `${symbol}_${timeframe}`;
+}
+
+function addRawEvent(payload) {
+  const entry = {
+    id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+    receivedAt: new Date().toISOString(),
+    payload
+  };
+
+  state.latestRawEvent = entry;
+  state.rawEvents.unshift(entry);
+
+  // keep memory controlled
+  if (state.rawEvents.length > 100) {
+    state.rawEvents = state.rawEvents.slice(0, 100);
+  }
+
+  return entry;
 }
 
 function addEvent(event) {
@@ -79,6 +100,7 @@ function getReactions() {
 }
 
 module.exports = {
+  addRawEvent,
   addEvent,
   getSetup,
   updateSetup,

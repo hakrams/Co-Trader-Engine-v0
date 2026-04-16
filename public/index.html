@@ -9,7 +9,7 @@
 <body>
   <main class="container">
     <h1>Co-Trader Engine V0</h1>
-    <p class="subtitle">Prototype shell is running.</p>
+    <p class="subtitle">Prototype shell + Webhook Placeholder Observatory</p>
 
     <section class="card">
       <h2>System Status</h2>
@@ -22,8 +22,24 @@
     </section>
 
     <section class="card">
-      <h2>Next Step Ready</h2>
-      <p>Webhook intake can be added in the next phase.</p>
+      <h2>Webhook Placeholders</h2>
+      <p id="raw-count">Raw events captured: 0</p>
+      <p id="raw-latest-meta">No raw payload yet.</p>
+
+      <div class="grid-2">
+        <div>
+          <h3>Latest Raw Payload</h3>
+          <pre id="raw-latest" class="json-box">Waiting for webhook...</pre>
+        </div>
+
+        <div>
+          <h3>Observed Field Summary</h3>
+          <pre id="raw-summary" class="json-box">No fields observed yet.</pre>
+        </div>
+      </div>
+
+      <h3>Raw Payload History (Newest First)</h3>
+      <div id="raw-history" class="history-list"></div>
     </section>
   </main>
 

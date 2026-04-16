@@ -45,3 +45,50 @@ h2 {
   color: #f8fafc;
   min-height: 24px;
 }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.json-box {
+  margin: 0;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #020617;
+  color: #cbd5e1;
+  overflow: auto;
+  max-height: 320px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.history-item {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 14px;
+  background: #0f172a;
+}
+
+.history-meta {
+  margin-bottom: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+@media (max-width: 800px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
