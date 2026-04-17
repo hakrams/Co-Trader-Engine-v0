@@ -20,11 +20,12 @@ function hasMinimalV0Fields(payload) {
 }
 
 app.post("/webhook", (req, res) => {
-  try {
-    // ✅ ADD THIS LINE FIRST
-    state.addRawEvent(req.body);
+  // 🔥 1. ALWAYS capture raw FIRST (no conditions)
+  state.addRawEvent(req.body);
 
+  try {
     const parsed = parser.parse(req.body);
+
     console.log("[PARSED EVENT]", JSON.stringify(parsed, null, 2));
 
     state.addEvent(parsed);
@@ -37,20 +38,20 @@ app.post("/webhook", (req, res) => {
 
     if (nextState) {
       state.updateSetup(symbol, timeframe, eventType, nextState);
+    } else {
+      console.log(`[STATE] No mapping for event type: ${eventType}`);
     }
 
-    res.status(200).json({
-      ok: true,
-      message: "Webhook received successfully"
-    });
   } catch (error) {
-    console.error("[ERROR]", error.message);
-
-    res.status(400).json({
-      ok: false,
-      error: error.message
-    });
+    // ❗ IMPORTANT: DO NOT FAIL REQUEST
+    console.log("[PARSER ERROR - NON BLOCKING]", error.message);
   }
+
+  // 🔥 2. ALWAYS respond success
+  res.status(200).json({
+    ok: true,
+    message: "Webhook received successfully"
+  });
 });
 
 app.get("/state", (req, res) => {
