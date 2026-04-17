@@ -1,12 +1,40 @@
+const fs = require("fs");
+const path = require("path");
 const { getDecisionFromSetupState } = require("./logic");
 
-const state = {
+const STATE_FILE = path.join(__dirname, "..", "data", "engine-state.json");
+
+const defaultState = {
   latestEvent: null,
   history: [],
   setups: {},
   rawEvents: [],
   latestRawEvent: null
 };
+
+function loadStateFromFile() {
+  try {
+    if (!fs.existsSync(STATE_FILE)) {
+      return { ...defaultState };
+    }
+
+    const fileContent = fs.readFileSync(STATE_FILE, "utf8");
+    const parsed = JSON.parse(fileContent);
+
+    return {
+      latestEvent: parsed.latestEvent ?? null,
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+      setups: parsed.setups && typeof parsed.setups === "object" ? parsed.setups : {},
+      rawEvents: Array.isArray(parsed.rawEvents) ? parsed.rawEvents : [],
+      latestRawEvent: parsed.latestRawEvent ?? null
+    };
+  } catch (error) {
+    console.error("[STATE LOAD ERROR]", error.message);
+    return { ...defaultState };
+  }
+}
+
+const state = loadStateFromFile();
 
 function getKey(symbol, timeframe) {
   return `${symbol}_${timeframe}`;
@@ -22,7 +50,6 @@ function addRawEvent(payload) {
   state.latestRawEvent = entry;
   state.rawEvents.unshift(entry);
 
-  // keep memory controlled
   if (state.rawEvents.length > 100) {
     state.rawEvents = state.rawEvents.slice(0, 100);
   }
