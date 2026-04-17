@@ -93,17 +93,17 @@ async function loadState() {
       dashboardAlertEl.textContent = "No new alerts yet.";
     }
 
-    if (data.latestEvent) {
+    if (data.latestEvent && data.latestEvent.normalized) {
       latestEventEl.textContent =
         "Latest Event: " +
-        data.latestEvent.event +
+        data.latestEvent.normalized.event_raw +
         " (" +
-        data.latestEvent.symbol +
+        data.latestEvent.normalized.symbol +
         " " +
-        data.latestEvent.timeframe +
+        data.latestEvent.normalized.timeframe +
         ")";
     } else {
-      latestEventEl.textContent = "No parsed V0 event received yet.";
+      latestEventEl.textContent = "No events received yet.";
     }
 
     const setups = data.setups || {};
@@ -159,8 +159,17 @@ async function loadState() {
     } else {
       historyEl.innerHTML = "<strong>History:</strong><br>";
       history.forEach((item, index) => {
+        const normalized = item.normalized || {};
+
         historyEl.innerHTML +=
-          `${index + 1}. ${item.event} (${item.symbol} ${item.timeframe})<br>`;
+          (index + 1) +
+          ". " +
+          (normalized.event_raw || "unknown") +
+          " (" +
+          (normalized.symbol || "unknown") +
+          " " +
+          (normalized.timeframe || "unknown") +
+          ")<br>";
       });
     }
   } catch (err) {
