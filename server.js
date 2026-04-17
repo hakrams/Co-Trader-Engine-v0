@@ -21,6 +21,9 @@ function hasMinimalV0Fields(payload) {
 
 app.post("/webhook", (req, res) => {
   try {
+    // ✅ ADD THIS LINE FIRST
+    state.addRawEvent(req.body);
+
     const parsed = parser.parse(req.body);
     console.log("[PARSED EVENT]", JSON.stringify(parsed, null, 2));
 
@@ -34,8 +37,6 @@ app.post("/webhook", (req, res) => {
 
     if (nextState) {
       state.updateSetup(symbol, timeframe, eventType, nextState);
-    } else {
-      console.log(`[STATE] No mapping for event type: ${eventType}`);
     }
 
     res.status(200).json({
