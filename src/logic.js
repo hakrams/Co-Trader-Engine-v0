@@ -1,6 +1,6 @@
-function getNextState(eventName) {
-  switch (eventName) {
-    case "choch_detected":
+function getNextState(eventType) {
+  switch (eventType) {
+    case "choch":
       return "waiting_for_ob_tap";
 
     case "ob_tap":

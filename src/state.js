@@ -41,7 +41,7 @@ function getSetup(symbol, timeframe) {
 }
 
 function isTransitionAllowed(event, currentState) {
-  if (event === "choch_detected") {
+  if (event === "choch") {
     return true;
   }
 

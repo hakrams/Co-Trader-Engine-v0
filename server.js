@@ -21,39 +21,26 @@ function hasMinimalV0Fields(payload) {
 
 app.post("/webhook", (req, res) => {
   try {
-    const rawEntry = state.addRawEvent(req.body);
-    console.log("[RAW WEBHOOK RECEIVED]");
-    console.log(JSON.stringify(rawEntry, null, 2));
+    const parsed = parser.parse(req.body);
+    console.log("[PARSED EVENT]", JSON.stringify(parsed, null, 2));
 
-    // Keep old V0 path alive only when classic fields exist
-    if (hasMinimalV0Fields(req.body)) {
-      const parsed = parser.parse(req.body);
-      console.log("[PARSED EVENT]", parsed);
+    state.addEvent(parsed);
 
-      state.addEvent(parsed);
+    const eventType = parsed.normalized.event_type;
+    const symbol = parsed.normalized.symbol;
+    const timeframe = parsed.normalized.timeframe;
 
-      const nextState = logic.getNextState(parsed.event);
+    const nextState = logic.getNextState(eventType);
 
-      if (nextState) {
-        state.updateSetup(
-          parsed.symbol,
-          parsed.timeframe,
-          parsed.event,
-          nextState
-        );
-      } else {
-        console.log(`[STATE] No mapping for event: ${parsed.event}`);
-      }
+    if (nextState) {
+      state.updateSetup(symbol, timeframe, eventType, nextState);
     } else {
-      console.log(
-        "[OBSERVATORY] Raw payload stored only. Skipped V0 parser/state path."
-      );
+      console.log(`[STATE] No mapping for event type: ${eventType}`);
     }
 
     res.status(200).json({
       ok: true,
-      message: "Webhook captured successfully",
-      rawEventCount: state.getState().rawEvents.length
+      message: "Webhook received successfully"
     });
   } catch (error) {
     console.error("[ERROR]", error.message);
