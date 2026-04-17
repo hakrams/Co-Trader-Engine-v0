@@ -34,6 +34,14 @@ function loadStateFromFile() {
   }
 }
 
+function saveStateToFile() {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf8");
+  } catch (error) {
+    console.error("[STATE SAVE ERROR]", error.message);
+  }
+}
+
 const state = loadStateFromFile();
 
 function getKey(symbol, timeframe) {
@@ -54,12 +62,14 @@ function addRawEvent(payload) {
     state.rawEvents = state.rawEvents.slice(0, 100);
   }
 
+  saveStateToFile();
   return entry;
 }
 
 function addEvent(event) {
   state.latestEvent = event;
   state.history.push(event);
+  saveStateToFile();
 }
 
 function getSetup(symbol, timeframe) {
@@ -101,6 +111,7 @@ function updateSetup(symbol, timeframe, event, newSetupState) {
   }
 
   state.setups[key] = newSetupState;
+  saveStateToFile();
 
   console.log(
     `[STATE] ${symbol} ${timeframe}: ${previousState} -> ${newSetupState}`
