@@ -4,6 +4,15 @@ const {
   normalizeEventName
 } = require("./normalizer");
 
+function pickString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
 function parse(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("Payload must be a valid JSON object");
@@ -11,12 +20,9 @@ function parse(payload) {
 
   const receivedAt = new Date().toISOString();
 
-  const rawEvent =
-    typeof payload.event === "string" ? payload.event.trim() : "";
-  const rawSymbol =
-    typeof payload.symbol === "string" ? payload.symbol.trim() : "";
-  const rawTimeframe =
-    typeof payload.timeframe === "string" ? payload.timeframe.trim() : "";
+  const rawEvent = pickString(payload.event) || "";
+  const rawSymbol = pickString(payload.symbol) || "";
+  const rawTimeframe = pickString(payload.timeframe) || "";
 
   if (!rawEvent) {
     throw new Error("Missing or invalid 'event'");
@@ -32,7 +38,27 @@ function parse(payload) {
 
   const normalizedEvent = normalizeEventName(rawEvent);
 
+  const nestedPrice =
+    payload.price && typeof payload.price === "object" && !Array.isArray(payload.price)
+      ? payload.price
+      : {};
+
+  const nestedMeta =
+    payload.meta && typeof payload.meta === "object" && !Array.isArray(payload.meta)
+      ? payload.meta
+      : {};
+
+  const nestedPlots =
+    payload.plots && typeof payload.plots === "object" && !Array.isArray(payload.plots)
+      ? payload.plots
+      : {};
+
   const plots = {};
+
+  for (const [key, value] of Object.entries(nestedPlots)) {
+    plots[key] = toNumberOrNull(value);
+  }
+
   for (const key in payload) {
     if (key.startsWith("plot_")) {
       plots[key] = toNumberOrNull(payload[key]);
@@ -57,44 +83,29 @@ function parse(payload) {
       timeframe: normalizeTimeframe(rawTimeframe),
 
       times: {
-        timestamp:
-          typeof payload.timestamp === "string" && payload.timestamp.trim()
-            ? payload.timestamp.trim()
-            : null,
-        bar_time:
-          typeof payload.bar_time === "string" && payload.bar_time.trim()
-            ? payload.bar_time.trim()
-            : null,
-        alert_time:
-          typeof payload.alert_time === "string" && payload.alert_time.trim()
-            ? payload.alert_time.trim()
-            : null,
+        timestamp: pickString(payload.timestamp),
+        bar_time: pickString(payload.bar_time),
+        alert_time: pickString(payload.alert_time),
         received_at: receivedAt
       },
 
       price: {
-        open: toNumberOrNull(payload.open),
-        high: toNumberOrNull(payload.high),
-        low: toNumberOrNull(payload.low),
-        close: toNumberOrNull(payload.close)
+        open: toNumberOrNull(nestedPrice.open ?? payload.open),
+        high: toNumberOrNull(nestedPrice.high ?? payload.high),
+        low: toNumberOrNull(nestedPrice.low ?? payload.low),
+        close: toNumberOrNull(nestedPrice.close ?? payload.close)
       },
 
       volume: toNumberOrNull(payload.volume),
 
       meta: {
-        exchange:
-          typeof payload.exchange === "string" && payload.exchange.trim()
-            ? payload.exchange.trim()
-            : null,
-        currency:
-          typeof payload.currency === "string" && payload.currency.trim()
-            ? payload.currency.trim()
-            : null,
-        base_currency:
-          typeof payload.base_currency === "string" &&
-          payload.base_currency.trim()
-            ? payload.base_currency.trim()
-            : null,
+        exchange: pickString(payload.exchange),
+        currency: pickString(nestedMeta.currency, payload.currency),
+        base_currency: pickString(
+          nestedMeta.base_currency,
+          nestedMeta.basecurrency,
+          payload.base_currency
+        ),
         source: "tradingview",
         plots
       }

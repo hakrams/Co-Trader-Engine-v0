@@ -2,3 +2,5 @@ node_modules/
 .env
 data/*
 !data/.gitkeep
+data/archive/*
+!data/archive/.gitkeep

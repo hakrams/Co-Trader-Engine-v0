@@ -1,266 +1,215 @@
-# 📘 CO-TRADER ENGINE — V0 (PROOF OF CONCEPT)## 🚀 OverviewCo-Trader Engine V0 is a **webhook-driven, state-based trading intelligence prototype** designed to validate the feasibility of an event-driven trading system using TradingView alerts.This version is **not a production system**.It is a **Proof of Concept (POC)** that demonstrates:> Real market signals → structured processing → state tracking → rule validation → actionable output → dashboard visibility---## 🎯 Purpose of V0The goal of V0 was to answer one critical question:> **Can a structured, state-based trading engine work end-to-end with real TradingView data?**V0 successfully proves:- webhook intake works- structured parsing works- state progression works- rule-based validation works- decision/output layer works- dashboard visibility works- real TradingView integration works---## 🧠 System Architecture (V0)The system follows a clean layered architecture:```textTradingView    ↓Webhook Intake Layer    ↓Parsing Layer    ↓State Layer    ↓Rule Layer    ↓Reaction Layer    ↓Dashboard (Visibility Layer)
-Layer Responsibilities
-LayerResponsibilityIntakeReceive webhook dataParsingExtract and validate payloadStateTrack setup progressionRulesEnforce valid sequencesReactionConvert state into decisionsDashboardDisplay system state
+# Co-Trader Engine V1
 
-🧱 Project Structure
-co-trader-engine-v0/├── package.json├── server.js├── src/│   ├── state.js│   ├── parser.js│   └── logic.js└── public/    ├── index.html    ├── style.css    └── app.js
+## Overview
 
-⚙️ Core Features
-1. Webhook Intake
+Co-Trader Engine V1 is a webhook-driven trading event engine that receives TradingView alerts, normalizes market-structure events, tracks setup progression per symbol and timeframe, and exposes a live browser dashboard for observability.
 
+This version is the next practical step after the original proof-of-concept. It keeps the same event-driven architecture, but adds a more structured parsing pipeline, raw payload visibility, and file-backed state persistence so the engine can survive restarts more reliably than the earlier in-memory-only flow.
 
-POST /webhook
+## What V1 Currently Does
 
+- accepts TradingView-style webhook payloads through `POST /webhook`
+- captures every raw payload first, even if parsing fails
+- normalizes event names, timeframe values, numeric fields, and metadata
+- tracks setup progression per `symbol_timeframe`
+- enforces simple sequence rules before state transitions
+- generates decision output from tracked setup state
+- persists engine state to `data/engine-state.json`
+- exposes a browser dashboard from `public/`
+- exposes raw event inspection through `GET /api/raw-events`
 
-Accepts JSON payloads
+## Current Architecture
 
+```text
+TradingView
+  -> /webhook
+  -> parser / normalizer
+  -> state update
+  -> rule validation
+  -> decision mapping
+  -> persisted engine state
+  -> dashboard + API visibility
+```
 
-Stores raw events
+## Project Structure
 
+```text
+co-trader-engine-v1/
+|-- data/
+|   |-- engine-state.json
+|   `-- .gitkeep
+|-- public/
+|   |-- index.html
+|   |-- style.css
+|   `-- app.js
+|-- src/
+|   |-- logic.js
+|   |-- normalizer.js
+|   |-- parser.js
+|   `-- state.js
+|-- server.js
+|-- package.json
+`-- README.md
+```
 
-Logs all incoming data
+## Core Files
 
+- `server.js`
+  Runs the Express server, serves the dashboard, accepts webhook requests, and exposes state/raw-event API routes.
 
+- `src/parser.js`
+  Validates incoming payload shape, extracts useful fields, and builds a normalized event object.
 
-2. Parsing Layer
-Extracts:
+- `src/normalizer.js`
+  Converts raw TradingView naming into engine-friendly event and timeframe values.
 
+- `src/state.js`
+  Stores latest event, event history, setup states, and raw payload history. Also loads and saves the engine state file.
 
-event
+- `src/logic.js`
+  Maps normalized event types into next setup states and setup states into decisions.
 
+- `public/index.html`
+  Dashboard shell for viewing current engine status.
 
-symbol
+- `public/app.js`
+  Polls engine APIs, renders state, shows raw payload visibility, and raises browser notifications on decision changes.
 
+## Event Flow
 
-timeframe
+1. A TradingView alert sends JSON to `POST /webhook`.
+2. The raw payload is stored immediately.
+3. The parser validates and normalizes the payload.
+4. The normalized event is added to history.
+5. The rule layer checks whether the transition is allowed.
+6. The setup state is updated if valid.
+7. The reaction layer exposes a decision such as `monitoring` or `actionable`.
+8. The dashboard and API endpoints reflect the current engine view.
 
+## Current Event Mapping
 
-timestamp
+### Recognized normalized event types
 
+- `choch`
+- `ob_tap`
 
-Validates:
+### Current setup progression
 
+- `choch` -> `waiting_for_ob_tap`
+- `ob_tap` -> `ready_for_ltf`
 
-required fields exist
+### Current decision mapping
 
+- `waiting_for_ob_tap` -> `monitoring`
+- `ready_for_ltf` -> `actionable`
 
-correct data types
+## Current Supported Raw TradingView Event Names
 
+- `bullish_choch_detected`
+- `bearish_choch_detected`
+- `Demand_ob_tap`
+- `Supply_ob_tap`
 
-Outputs structured event:
-{  "type": "choch_detected",  "pair": "EURUSD",  "timeframe": "1m",  "timestamp": "...",  "valid": true}
+## API Endpoints
 
-3. State Layer (Memory Engine)
-Tracks setup per:
-symbol + "_" + timeframe
+### `POST /webhook`
+
+Receives TradingView-style JSON payloads.
+
 Example:
-{  "EURUSD_1m": "waiting_for_ob_tap"}
 
-4. Rule Layer (Control)
-Prevents invalid sequences.
-Valid flow:
-choch_detected → waiting_for_ob_tapob_tap → ready_for_ltf
-Invalid example:
-ob_tap without prior choch_detected → BLOCKED
+```json
+{
+  "event": "bullish_choch_detected",
+  "symbol": "EURUSD",
+  "timeframe": "15",
+  "timestamp": "2026-04-18T10:15:00Z"
+}
+```
 
-5. Reaction Layer (Decision Engine)
-Converts state into meaning:
-Setup StateDecisionwaiting_for_ob_tapmonitoringready_for_ltfactionableunknownnone
-Example:
-{  "EURUSD_1m": {    "setupState": "ready_for_ltf",    "decision": "actionable"  }}
+Important behavior:
 
-6. Dashboard (Visibility)
-Displays:
+- the request always returns success if the server receives it
+- the raw payload is always stored first
+- parser errors are logged but do not fail the webhook request
 
+### `GET /state`
 
-system status
+Returns:
 
+- latest parsed event
+- event history
+- tracked setup states
+- derived reactions
 
-latest event
+### `GET /api/raw-events`
 
+Returns:
 
-setup states
+- raw event count
+- latest raw payload
+- recent raw payload history
 
+## Local Run
 
-reaction output
+### Requirements
 
+- Node.js
+- npm
 
-event history
+### Install
 
+```bash
+npm install
+```
 
-Includes:
+### Start
 
+```bash
+npm start
+```
 
-auto-refresh (polling)
+The server listens on:
 
+```text
+http://localhost:4000
+```
 
-basic browser notifications (V0 convenience)
+Open the dashboard in a browser after the server starts.
 
+## Persistence
 
+V1 stores engine state in:
 
-🌐 Real TradingView Integration
-Webhook Endpoint
-https://engine.futureclassroom.app/webhook
+```text
+data/engine-state.json
+```
 
-TradingView Message Format
-{  "event": "choch_detected",  "symbol": "EURUSD",  "timeframe": "1m",  "timestamp": "{{timenow}}"}
+That state currently includes:
 
-Infrastructure
+- latest parsed event
+- parsed event history
+- per-setup state
+- raw payload history
+- latest raw payload
 
+## Current Limitations
 
-Caddy reverse proxy
+- no database yet
+- no authentication
+- no duplicate-alert protection yet
+- event progression is still intentionally simple
+- raw history is capped to a recent rolling window
+- dashboard polling is basic
+- package metadata still needs cleanup in some places outside this README
 
+## V1 Intent
 
-HTTPS via Let's Encrypt
+V1 should be treated as the practical stabilization layer after the earlier proof-of-concept:
 
+- more observability
+- better normalization
+- restart-safe file persistence
+- clearer separation between raw intake and parsed engine logic
 
-Domain routing:
-
-
-engine.futureclassroom.app → localhost:4000
-
-🔄 End-to-End Flow
-TradingView Alert        ↓HTTPS Webhook        ↓Caddy Proxy        ↓Express Server        ↓Parse Payload        ↓Update State        ↓Apply Rules        ↓Generate Reaction        ↓Expose via /state        ↓Dashboard Display
-
-🧪 Testing Summary
-Verified Scenarios
-
-
-CHoCH → OB Tap sequence ✔
-
-
-Multi-pair tracking ✔
-
-
-Rule enforcement ✔
-
-
-Invalid sequence blocking ✔
-
-
-Dashboard updates ✔
-
-
-Real TradingView signal flow ✔
-
-
-
-🔐 System Capabilities (V0)
-The system can:
-
-
-receive real market signals
-
-
-understand structured events
-
-
-track setup progression
-
-
-enforce sequence correctness
-
-
-generate actionable decisions
-
-
-display results live
-
-
-
-⚠️ Known Limitations (V0)
-This version intentionally excludes:
-
-
-persistent storage (in-memory only)
-
-
-duplicate alert handling
-
-
-advanced validation
-
-
-multi-timeframe orchestration
-
-
-authentication/security
-
-
-external notifications (Telegram, etc.)
-
-
-AI interpretation
-
-
-execution logic (no trading automation)
-
-
-
-🧠 Key Engineering Principles Used
-1. Separation of Concerns
-Each layer has one job:
-
-
-no mixing logic
-
-
-no hidden coupling
-
-
-
-2. State-Based Design
-System tracks progression, not isolated events:
-event → state → decision
-
-3. Rule-Based Control
-No blind updates:
-event → rule check → update or block
-
-4. Event-Driven Architecture
-System reacts to incoming signals, not polling the market.
-
-🏁 V0 Conclusion
-V0 successfully demonstrates:
-
-The Co-Trader Engine concept is technically valid and operationally feasible.
-
-This is no longer an idea.
-This is a working system foundation.
-
-🚀 Next Phase — V1
-V1 will focus on:
-
-
-stability and reliability
-
-
-persistence (database)
-
-
-multi-pair scaling
-
-
-duplicate handling
-
-
-stronger validation
-
-
-structured notification system
-
-
-potential AI-assisted interpretation
-
-
-
-🧊 Final Statement
-Co-Trader Engine V0 represents:
-
-A successful transition from concept → working event-driven trading intelligence system.
-
-This version serves as the foundation for all future development.
-
-🏆 Status
-V0: Proof of Concept → COMPLETE ✅
----If you want next, I can also help you:- structure your GitHub repo (folders, branches, tags)- write a **V1 README + roadmap**- or prepare a **clean demo description** if you ever want to show this to someoneBut for now…**V0 is officially closed. Clean win. 🏆🔥**
+It is still not a finished production system, but it is a stronger working foundation for the next layer of engine growth.

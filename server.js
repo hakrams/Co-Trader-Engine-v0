@@ -74,6 +74,41 @@ app.get("/api/raw-events", (req, res) => {
   });
 });
 
+app.post("/archive-reset", (req, res) => {
+  try {
+    const archiveResult = state.archiveCurrentState();
+
+    if (!archiveResult.ok) {
+      return res.status(500).json({
+        ok: false,
+        error: "Failed to archive current state"
+      });
+    }
+
+    const resetResult = state.resetActiveState();
+
+    if (!resetResult.ok) {
+      return res.status(500).json({
+        ok: false,
+        error: "Failed to reset active state"
+      });
+    }
+
+    res.status(200).json({
+      ok: true,
+      message: "Current state archived and active state reset",
+      archiveFile: archiveResult.archiveFile
+    });
+  } catch (error) {
+    console.error("[ARCHIVE RESET ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
 app.listen(4000, "0.0.0.0", () => {
   console.log("Server running on port 4000");
 });

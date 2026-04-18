@@ -3,6 +3,7 @@ const path = require("path");
 const { getDecisionFromSetupState } = require("./logic");
 
 const STATE_FILE = path.join(__dirname, "..", "data", "engine-state.json");
+const ARCHIVE_DIR = path.join(__dirname, "..", "data", "archive");
 
 const defaultState = {
   latestEvent: null,
@@ -40,6 +41,61 @@ function saveStateToFile() {
   } catch (error) {
     console.error("[STATE SAVE ERROR]", error.message);
   }
+}
+
+function ensureArchiveDir() {
+  try {
+    if (!fs.existsSync(ARCHIVE_DIR)) {
+      fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+    }
+  } catch (error) {
+    console.error("[ARCHIVE DIR ERROR]", error.message);
+  }
+}
+
+function archiveCurrentState() {
+  try {
+    ensureArchiveDir();
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const archiveFile = path.join(ARCHIVE_DIR, `archive-${timestamp}.json`);
+
+    const archivePayload = {
+      archivedAt: new Date().toISOString(),
+      stateSnapshot: state
+    };
+
+    fs.writeFileSync(
+      archiveFile,
+      JSON.stringify(archivePayload, null, 2),
+      "utf8"
+    );
+
+    return {
+      ok: true,
+      archiveFile
+    };
+  } catch (error) {
+    console.error("[ARCHIVE SAVE ERROR]", error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+function resetActiveState() {
+  state.latestEvent = null;
+  state.history = [];
+  state.setups = {};
+  state.rawEvents = [];
+  state.latestRawEvent = null;
+
+  saveStateToFile();
+
+  return {
+    ok: true
+  };
 }
 
 const state = loadStateFromFile();
@@ -143,5 +199,7 @@ module.exports = {
   getSetup,
   updateSetup,
   getState,
-  getReactions
+  getReactions,
+  archiveCurrentState,
+  resetActiveState
 };

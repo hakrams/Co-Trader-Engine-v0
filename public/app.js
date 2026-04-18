@@ -75,6 +75,36 @@ function renderRawHistory(items) {
     .join("");
 }
 
+async function archiveAndResetActive() {
+  const statusEl = document.getElementById("archive-reset-status");
+  const buttonEl = document.getElementById("archive-reset-btn");
+
+  if (!statusEl || !buttonEl) return;
+
+  statusEl.textContent = "Archiving and resetting active state...";
+  buttonEl.disabled = true;
+
+  try {
+    const res = await fetch("/archive-reset", {
+      method: "POST"
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Archive reset failed");
+    }
+
+    statusEl.textContent = `Archived successfully: ${data.archiveFile}`;
+    await loadAll();
+  } catch (err) {
+    console.error("Archive reset failed:", err);
+    statusEl.textContent = `Archive reset failed: ${err.message}`;
+  } finally {
+    buttonEl.disabled = false;
+  }
+}
+
 async function loadState() {
   try {
     const res = await fetch("/state");
@@ -215,6 +245,11 @@ async function loadRawEvents() {
 
 async function loadAll() {
   await Promise.all([loadState(), loadRawEvents()]);
+}
+
+const archiveResetBtn = document.getElementById("archive-reset-btn");
+if (archiveResetBtn) {
+  archiveResetBtn.addEventListener("click", archiveAndResetActive);
 }
 
 loadAll();
