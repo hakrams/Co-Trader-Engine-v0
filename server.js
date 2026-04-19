@@ -29,6 +29,17 @@ app.post("/webhook", (req, res) => {
 
     console.log("[PARSED EVENT]", JSON.stringify(parsed, null, 2));
 
+    if (parsed.normalized.event_type === "ob_tap") {
+      state.trackLiquidityEngineeringObTap(
+        parsed.normalized.symbol,
+        parsed.normalized.timeframe,
+        parsed.normalized.direction,
+        parsed.normalized.times.timestamp || parsed.raw.received_at
+      );
+    }
+
+    state.refreshAllLiquidityEngineeringStates();
+
     state.addEvent(parsed);
     const eventType = parsed.normalized.event_type;
     const symbol = parsed.normalized.symbol;
@@ -60,6 +71,8 @@ app.post("/webhook", (req, res) => {
 });
 
 app.get("/state", (req, res) => {
+  state.refreshAllLiquidityEngineeringStates();
+
   const currentState = state.getState();
   const reactions = state.getReactions();
 
@@ -70,6 +83,8 @@ app.get("/state", (req, res) => {
 });
 
 app.get("/api/raw-events", (req, res) => {
+  state.refreshAllLiquidityEngineeringStates();
+
   const currentState = state.getState();
 
   res.json({

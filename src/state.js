@@ -102,6 +102,44 @@ function createDefaultExecutionValidation() {
   };
 }
 
+function createDefaultLiquidityEngineering() {
+  return {
+    enabled: false,
+    timeframe_eligible: false,
+
+    status: "inactive",
+    activation_reason: null,
+
+    tap_count: 0,
+    first_tap_at: null,
+    last_tap_at: null,
+
+    activation_window_seconds: 120,
+    activation_window_started_at: null,
+    activation_window_ends_at: null,
+
+    activated_at: null,
+
+    monitoring_window_minutes: 5,
+    monitoring_window_starts_at: null,
+    monitoring_window_ends_at: null,
+
+    waiting_for_color_switch: false,
+    color_switch_handoff_ready_at: null,
+
+    poi_persistence_supported: false,
+    poi_persistence_status: "deferred",
+    poi_persistence_started_at: null,
+    poi_persistence_min_minutes: 3,
+    poi_persistence_max_minutes: 15,
+
+    completed_at: null,
+    blocked_reason: null,
+
+    notes: []
+  };
+}
+
 function createDefaultRiskSettings() {
   return {
     tradingEnabled: true,
@@ -295,6 +333,28 @@ function updateRiskState({ settings = null, runtime = null } = {}) {
   return state.risk;
 }
 
+function ensureSetupHasLiquidityEngineering(setup) {
+  if (!setup || typeof setup !== "object") {
+    return setup;
+  }
+
+  const base = createDefaultLiquidityEngineering();
+  const incoming =
+    setup.liquidity_engineering &&
+    typeof setup.liquidity_engineering === "object"
+      ? setup.liquidity_engineering
+      : {};
+
+  return {
+    ...setup,
+    liquidity_engineering: {
+      ...base,
+      ...incoming,
+      notes: Array.isArray(incoming.notes) ? incoming.notes : base.notes
+    }
+  };
+}
+
 function ensureSetupHasEntryModels(setup) {
   if (!setup || typeof setup !== "object") {
     return setup;
@@ -402,7 +462,9 @@ function setModelStatus(entryModels, modelKey, status, reason) {
 }
 
 function evaluateEntryModelsForSetup(setup) {
-  const safeSetup = ensureSetupHasEntryModels(ensureSetupHasScoring(setup));
+  const safeSetup = ensureSetupHasEntryModels(
+    ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+  );
   const entryModels = createDefaultEntryModels();
 
   const contextType = deriveEntryModelContextType(safeSetup);
@@ -518,7 +580,9 @@ function evaluateEntryModelsForSetup(setup) {
 }
 
 function buildExecutionValidationChecks(setup) {
-  const safeSetup = ensureSetupHasEntryModels(ensureSetupHasScoring(setup));
+  const safeSetup = ensureSetupHasEntryModels(
+    ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+  );
 
   const stage = safeSetup?.stage || null;
   const eligibility = safeSetup?.eligibility || "eligible";
@@ -539,7 +603,9 @@ function buildExecutionValidationChecks(setup) {
 
 function evaluateExecutionValidationForSetup(setup) {
   const safeSetup = ensureSetupHasExecutionValidation(
-    ensureSetupHasEntryModels(ensureSetupHasScoring(setup))
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+    )
   );
 
   const checks = buildExecutionValidationChecks(safeSetup);
@@ -658,7 +724,7 @@ function refreshSetupEntryModels(symbol, timeframe, direction) {
   }
 
   const safeSetup = ensureSetupHasEntryModels(
-    ensureSetupHasScoring(existingSetup)
+    ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(existingSetup))
   );
 
   state.setups[key] = {
@@ -683,7 +749,9 @@ function refreshSetupExecutionValidation(symbol, timeframe, direction) {
   }
 
   const safeSetup = ensureSetupHasExecutionValidation(
-    ensureSetupHasEntryModels(ensureSetupHasScoring(existingSetup))
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(existingSetup))
+    )
   );
 
   state.setups[key] = {
@@ -700,7 +768,7 @@ function ensureSetupHasScoring(setup) {
     return setup;
   }
 
-  return ensureSetupHasEntryModels({
+  return ensureSetupHasLiquidityEngineering(ensureSetupHasEntryModels({
     ...setup,
     scoring:
       setup.scoring && typeof setup.scoring === "object"
@@ -738,7 +806,7 @@ function ensureSetupHasScoring(setup) {
             threshold: setup.scoring.threshold ?? "none"
           }
         : createDefaultScoring()
-  });
+  }));
 }
 
 const CONTEXT_PROFILE_MAP = {
@@ -863,7 +931,9 @@ function calculateScoringFromManualInput(contextProfile, scores) {
 
 function applySetupScoring(symbol, timeframe, direction, contextProfile, scores) {
   const key = getKey(symbol, timeframe, direction);
-  const existingSetup = ensureSetupHasScoring(state.setups[key] || null);
+  const existingSetup = ensureSetupHasLiquidityEngineering(
+    ensureSetupHasScoring(state.setups[key] || null)
+  );
 
   if (!existingSetup) {
     return {
@@ -879,11 +949,13 @@ function applySetupScoring(symbol, timeframe, direction, contextProfile, scores)
   }
 
   state.setups[key] = ensureSetupHasExecutionValidation(
-    ensureSetupHasEntryModels({
-      ...existingSetup,
-      scoring: result.scoring,
-      updatedAt: new Date().toISOString()
-    })
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering({
+        ...existingSetup,
+        scoring: result.scoring,
+        updatedAt: new Date().toISOString()
+      })
+    )
   );
 
   state.setups[key].entry_models = evaluateEntryModelsForSetup(state.setups[key]);
@@ -930,7 +1002,9 @@ function loadStateFromFile() {
 
     for (const key in safeSetups) {
       safeSetups[key] = ensureSetupHasExecutionValidation(
-        ensureSetupHasEntryModels(ensureSetupHasScoring(safeSetups[key]))
+        ensureSetupHasEntryModels(
+          ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(safeSetups[key]))
+        )
       );
     }
 
@@ -1030,6 +1104,319 @@ function getKey(symbol, timeframe, direction) {
   return `${symbol}_${timeframe}_${direction}`;
 }
 
+function isLiquidityEngineeringEligibleTimeframe(timeframe) {
+  return ["3m", "5m", "15m"].includes(timeframe);
+}
+
+function toIsoOrNow(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString();
+  }
+  return parsed.toISOString();
+}
+
+function addSecondsToIso(isoString, seconds) {
+  const base = new Date(isoString);
+  return new Date(base.getTime() + seconds * 1000).toISOString();
+}
+
+function addMinutesToIso(isoString, minutes) {
+  const base = new Date(isoString);
+  return new Date(base.getTime() + minutes * 60 * 1000).toISOString();
+}
+
+function ensureLiquidityEngineeringSetup(symbol, timeframe, direction) {
+  const key = getKey(symbol, timeframe, direction);
+  const now = new Date().toISOString();
+
+  const existing = state.setups[key]
+    ? ensureSetupHasExecutionValidation(
+        ensureSetupHasEntryModels(
+          ensureSetupHasLiquidityEngineering(
+            ensureSetupHasScoring(state.setups[key])
+          )
+        )
+      )
+    : null;
+
+  if (existing) {
+    return { key, setup: existing };
+  }
+
+  const created = ensureSetupHasExecutionValidation(
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering({
+        symbol,
+        timeframe,
+        direction,
+
+        stage: null,
+        lastEvent: null,
+
+        eligibility: "eligible",
+        scoring: createDefaultScoring(),
+        entry_models: createDefaultEntryModels(),
+        execution_validation: createDefaultExecutionValidation(),
+        liquidity_engineering: createDefaultLiquidityEngineering(),
+
+        createdAt: now,
+        updatedAt: now
+      })
+    )
+  );
+
+  state.setups[key] = created;
+  saveStateToFile();
+
+  return { key, setup: created };
+}
+
+function trackLiquidityEngineeringObTap(
+  symbol,
+  timeframe,
+  direction,
+  eventTimestamp
+) {
+  const key = getKey(symbol, timeframe, direction);
+  const timeframeEligible = isLiquidityEngineeringEligibleTimeframe(timeframe);
+
+  if (!timeframeEligible && !state.setups[key]) {
+    return null;
+  }
+
+  const setup = timeframeEligible
+    ? ensureLiquidityEngineeringSetup(symbol, timeframe, direction).setup
+    : state.setups[key];
+  const nowIso = toIsoOrNow(eventTimestamp);
+
+  const safeSetup = ensureSetupHasExecutionValidation(
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+    )
+  );
+
+  const le = {
+    ...createDefaultLiquidityEngineering(),
+    ...(safeSetup.liquidity_engineering || {})
+  };
+
+  le.enabled = timeframeEligible;
+  le.timeframe_eligible = timeframeEligible;
+  le.notes = Array.isArray(le.notes) ? le.notes : [];
+
+  if (!le.timeframe_eligible) {
+    le.status = "inactive";
+    le.blocked_reason = null;
+    le.notes = [
+      ...le.notes.filter(
+        (note) => note !== "timeframe_not_eligible_for_liquidity_engineering"
+      ),
+      "timeframe_not_eligible_for_liquidity_engineering"
+    ];
+
+    state.setups[key] = {
+      ...safeSetup,
+      liquidity_engineering: le,
+      updatedAt: new Date().toISOString()
+    };
+
+    saveStateToFile();
+    return state.setups[key];
+  }
+
+  const currentStatus = le.status || "inactive";
+  const windowEndMs = le.activation_window_ends_at
+    ? new Date(le.activation_window_ends_at).getTime()
+    : null;
+  const currentTapMs = new Date(nowIso).getTime();
+
+  if (currentStatus === "inactive") {
+    le.status = "armed";
+    le.activation_reason = null;
+
+    le.tap_count = 1;
+    le.first_tap_at = nowIso;
+    le.last_tap_at = nowIso;
+
+    le.activation_window_started_at = nowIso;
+    le.activation_window_ends_at = addSecondsToIso(
+      nowIso,
+      le.activation_window_seconds
+    );
+
+    le.activated_at = null;
+
+    le.monitoring_window_starts_at = null;
+    le.monitoring_window_ends_at = null;
+
+    le.waiting_for_color_switch = false;
+    le.color_switch_handoff_ready_at = null;
+
+    le.completed_at = null;
+    le.blocked_reason = null;
+  } else if (currentStatus === "armed") {
+    if (windowEndMs !== null && currentTapMs <= windowEndMs) {
+      le.status = "active";
+      le.activation_reason = "repeated_ob_tap_within_2_minutes";
+
+      le.tap_count = Number(le.tap_count || 0) + 1;
+      le.last_tap_at = nowIso;
+
+      le.activated_at = nowIso;
+
+      le.monitoring_window_starts_at = nowIso;
+      le.monitoring_window_ends_at = addMinutesToIso(
+        nowIso,
+        le.monitoring_window_minutes
+      );
+
+      le.waiting_for_color_switch = false;
+      le.color_switch_handoff_ready_at = null;
+
+      le.blocked_reason = null;
+    } else {
+      le.status = "armed";
+      le.activation_reason = null;
+
+      le.tap_count = 1;
+      le.first_tap_at = nowIso;
+      le.last_tap_at = nowIso;
+
+      le.activation_window_started_at = nowIso;
+      le.activation_window_ends_at = addSecondsToIso(
+        nowIso,
+        le.activation_window_seconds
+      );
+
+      le.activated_at = null;
+
+      le.monitoring_window_starts_at = null;
+      le.monitoring_window_ends_at = null;
+
+      le.waiting_for_color_switch = false;
+      le.color_switch_handoff_ready_at = null;
+
+      le.completed_at = null;
+      le.blocked_reason = null;
+    }
+  } else {
+    le.last_tap_at = nowIso;
+    le.tap_count = Number(le.tap_count || 0) + 1;
+  }
+
+  state.setups[key] = {
+    ...safeSetup,
+    lastEvent: "ob_tap",
+    liquidity_engineering: le,
+    updatedAt: new Date().toISOString()
+  };
+
+  saveStateToFile();
+  return state.setups[key];
+}
+
+function refreshLiquidityEngineeringForSetup(setup) {
+  const safeSetup = ensureSetupHasExecutionValidation(
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+    )
+  );
+
+  const le = {
+    ...createDefaultLiquidityEngineering(),
+    ...(safeSetup.liquidity_engineering || {})
+  };
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  if (!le.enabled) {
+    return safeSetup;
+  }
+
+  if (!le.timeframe_eligible) {
+    return {
+      ...safeSetup,
+      liquidity_engineering: le
+    };
+  }
+
+  if (
+    le.status === "armed" &&
+    le.activation_window_ends_at &&
+    now.getTime() > new Date(le.activation_window_ends_at).getTime()
+  ) {
+    le.status = "inactive";
+    le.activation_reason = null;
+
+    le.tap_count = 0;
+    le.first_tap_at = null;
+    le.last_tap_at = null;
+
+    le.activation_window_started_at = null;
+    le.activation_window_ends_at = null;
+
+    le.activated_at = null;
+
+    le.monitoring_window_starts_at = null;
+    le.monitoring_window_ends_at = null;
+
+    le.waiting_for_color_switch = false;
+    le.color_switch_handoff_ready_at = null;
+
+    le.completed_at = null;
+    le.blocked_reason = null;
+  }
+
+  if (le.status === "active") {
+    le.status = "monitoring";
+  }
+
+  if (
+    le.status === "monitoring" &&
+    le.monitoring_window_ends_at &&
+    now.getTime() >= new Date(le.monitoring_window_ends_at).getTime()
+  ) {
+    le.status = "ready_for_color_switch";
+    le.waiting_for_color_switch = true;
+    le.color_switch_handoff_ready_at =
+      le.color_switch_handoff_ready_at || nowIso;
+  }
+
+  return {
+    ...safeSetup,
+    liquidity_engineering: le
+  };
+}
+
+function refreshAllLiquidityEngineeringStates() {
+  let changed = false;
+
+  for (const key in state.setups) {
+    const existing = state.setups[key];
+    if (!existing || typeof existing !== "object") {
+      continue;
+    }
+
+    const before = JSON.stringify(existing);
+    const refreshed = refreshLiquidityEngineeringForSetup(existing);
+    const after = JSON.stringify(refreshed);
+
+    if (before !== after) {
+      changed = true;
+    }
+
+    state.setups[key] = refreshed;
+  }
+
+  if (changed) {
+    saveStateToFile();
+  }
+
+  return changed;
+}
+
 function addRawEvent(payload) {
   const entry = {
     id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
@@ -1057,7 +1444,11 @@ function addEvent(event) {
 function getSetup(symbol, timeframe, direction) {
   const key = getKey(symbol, timeframe, direction);
   const setup = state.setups[key] || null;
-  return ensureSetupHasExecutionValidation(ensureSetupHasScoring(setup));
+  return ensureSetupHasExecutionValidation(
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+    )
+  );
 }
 
 function isTransitionAllowed(event, currentStage) {
@@ -1102,7 +1493,10 @@ function setSetupEligibility(symbol, timeframe, direction, eligibility) {
 
   setup.eligibility = eligibility;
   setup.updatedAt = new Date().toISOString();
-  setup.scoring = ensureSetupHasScoring(setup).scoring;
+  const safeSetup = ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup));
+
+  setup.liquidity_engineering = safeSetup.liquidity_engineering;
+  setup.scoring = safeSetup.scoring;
   setup.entry_models = evaluateEntryModelsForSetup(setup);
   setup.execution_validation = evaluateExecutionValidationForSetup(setup);
 
@@ -1116,7 +1510,11 @@ function setSetupEligibility(symbol, timeframe, direction, eligibility) {
 function updateSetup(symbol, timeframe, direction, event, newSetupState) {
   const key = getKey(symbol, timeframe, direction);
   const previousState = ensureSetupHasExecutionValidation(
-    ensureSetupHasScoring(state.setups[key] || null)
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(
+        ensureSetupHasScoring(state.setups[key] || null)
+      )
+    )
   );
 
   const allowed = isTransitionAllowed(event, previousState?.stage || null);
@@ -1131,24 +1529,29 @@ function updateSetup(symbol, timeframe, direction, event, newSetupState) {
   const now = new Date().toISOString();
 
   state.setups[key] = ensureSetupHasExecutionValidation(
-    ensureSetupHasEntryModels({
-      symbol,
-      timeframe,
-      direction,
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering({
+        symbol,
+        timeframe,
+        direction,
 
-      stage: newSetupState,
-      lastEvent: event,
+        stage: newSetupState,
+        lastEvent: event,
 
-      eligibility: previousState?.eligibility || "eligible",
-      scoring: previousState?.scoring || createDefaultScoring(),
-      entry_models: previousState?.entry_models || createDefaultEntryModels(),
-      execution_validation:
-        previousState?.execution_validation ||
-        createDefaultExecutionValidation(),
+        eligibility: previousState?.eligibility || "eligible",
+        scoring: previousState?.scoring || createDefaultScoring(),
+        entry_models: previousState?.entry_models || createDefaultEntryModels(),
+        liquidity_engineering:
+          previousState?.liquidity_engineering ||
+          createDefaultLiquidityEngineering(),
+        execution_validation:
+          previousState?.execution_validation ||
+          createDefaultExecutionValidation(),
 
-      createdAt: previousState?.createdAt || now,
-      updatedAt: now
-    })
+        createdAt: previousState?.createdAt || now,
+        updatedAt: now
+      })
+    )
   );
 
   state.setups[key].entry_models = evaluateEntryModelsForSetup(state.setups[key]);
@@ -1167,7 +1570,9 @@ function getState() {
 
   for (const key in state.setups) {
     safeSetups[key] = ensureSetupHasExecutionValidation(
-      ensureSetupHasScoring(state.setups[key])
+      ensureSetupHasEntryModels(
+        ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(state.setups[key]))
+      )
     );
   }
 
@@ -1183,7 +1588,9 @@ function getReactions() {
 
   for (const key in state.setups) {
     const setup = ensureSetupHasExecutionValidation(
-      ensureSetupHasScoring(state.setups[key])
+      ensureSetupHasEntryModels(
+        ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(state.setups[key]))
+      )
     );
     const setupStage = setup?.stage || null;
     const eligibility = setup?.eligibility || "eligible";
@@ -1199,6 +1606,31 @@ function getReactions() {
         executionStatus: setup.execution_validation?.status || "invalid",
         riskState: state.risk?.status?.state || "risk_allowed"
       }),
+      liquidityEngineeringSummary: {
+        enabled: setup.liquidity_engineering?.enabled || false,
+        timeframeEligible:
+          setup.liquidity_engineering?.timeframe_eligible || false,
+        status: setup.liquidity_engineering?.status || "inactive",
+        activationReason:
+          setup.liquidity_engineering?.activation_reason || null,
+        tapCount: setup.liquidity_engineering?.tap_count || 0,
+        activationWindow: {
+          startsAt:
+            setup.liquidity_engineering?.activation_window_started_at || null,
+          endsAt:
+            setup.liquidity_engineering?.activation_window_ends_at || null
+        },
+        monitoringWindow: {
+          startsAt:
+            setup.liquidity_engineering?.monitoring_window_starts_at || null,
+          endsAt:
+            setup.liquidity_engineering?.monitoring_window_ends_at || null
+        },
+        waitingForColorSwitch:
+          setup.liquidity_engineering?.waiting_for_color_switch || false,
+        readyAt:
+          setup.liquidity_engineering?.color_switch_handoff_ready_at || null
+      },
       entryModelsSummary: {
         context: setup.entry_models?.context_type || "unknown",
         available: setup.entry_models?.available || [],
@@ -1247,6 +1679,11 @@ module.exports = {
   updateRiskState,
   createDefaultExecutionValidation,
   ensureSetupHasExecutionValidation,
+  createDefaultLiquidityEngineering,
+  ensureSetupHasLiquidityEngineering,
+  trackLiquidityEngineeringObTap,
+  refreshLiquidityEngineeringForSetup,
+  refreshAllLiquidityEngineeringStates,
   buildExecutionValidationChecks,
   evaluateExecutionValidationForSetup,
   refreshSetupExecutionValidation
