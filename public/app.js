@@ -491,12 +491,30 @@ async function archiveAndResetActive() {
 
   if (!statusEl || !buttonEl) return;
 
+  const pin = window.prompt("Enter archive reset PIN to continue:");
+
+  if (pin === null) {
+    statusEl.textContent = "Archive reset cancelled.";
+    return;
+  }
+
+  if (pin !== "1234") {
+    statusEl.textContent = "Archive reset blocked: invalid PIN.";
+    return;
+  }
+
   statusEl.textContent = "Archiving and resetting active state...";
   buttonEl.disabled = true;
 
   try {
     const res = await fetch("/archive-reset", {
-      method: "POST"
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        pin
+      })
     });
 
     const data = await res.json();

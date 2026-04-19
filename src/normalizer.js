@@ -109,6 +109,22 @@ const EVENT_MAP = {
     direction: "bearish"
   },
 
+  bullish_bos_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "bos",
+    zone_type: null,
+    direction: "bullish"
+  },
+
+  bearish_bos_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "bos",
+    zone_type: null,
+    direction: "bearish"
+  },
+
   bullish_ob: {
     event_family: "zone_creation",
     event_type: "ob_created",

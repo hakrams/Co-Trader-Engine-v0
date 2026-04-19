@@ -4,6 +4,7 @@ const app = express();
 const parser = require("./src/parser");
 const state = require("./src/state");
 const logic = require("./src/logic");
+const ARCHIVE_RESET_PIN = "1234";
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
@@ -157,6 +158,15 @@ app.post("/risk/update", (req, res) => {
 
 app.post("/archive-reset", (req, res) => {
   try {
+    const { pin } = req.body || {};
+
+    if (pin !== ARCHIVE_RESET_PIN) {
+      return res.status(403).json({
+        ok: false,
+        error: "Invalid archive reset PIN"
+      });
+    }
+
     const archiveResult = state.archiveCurrentState();
 
     if (!archiveResult.ok) {
