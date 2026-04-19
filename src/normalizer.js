@@ -76,59 +76,93 @@ function toNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const EVENT_MAP = {
+  Demand_ob_tap: {
+    event_family: "zone_interaction",
+    event_type: "ob_tap",
+    structure_type: null,
+    zone_type: "demand",
+    direction: "bullish"
+  },
+
+  Supply_ob_tap: {
+    event_family: "zone_interaction",
+    event_type: "ob_tap",
+    structure_type: null,
+    zone_type: "supply",
+    direction: "bearish"
+  },
+
+  bullish_choch_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "choch",
+    zone_type: null,
+    direction: "bullish"
+  },
+
+  bearish_choch_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "choch",
+    zone_type: null,
+    direction: "bearish"
+  },
+
+  bullish_ob: {
+    event_family: "zone_creation",
+    event_type: "ob_created",
+    structure_type: null,
+    zone_type: "demand",
+    direction: "bullish"
+  },
+
+  bearish_ob: {
+    event_family: "zone_creation",
+    event_type: "ob_created",
+    structure_type: null,
+    zone_type: "supply",
+    direction: "bearish"
+  }
+};
+
 function normalizeEventName(eventName) {
   if (typeof eventName !== "string") {
     return {
       event_raw: "",
+      event_family: "unknown",
       event_type: "unknown",
+      structure_type: null,
       zone_type: null,
-      direction: null
+      direction: null,
+      qualifiers: {}
     };
   }
 
   const raw = eventName.trim();
+  const mapped = EVENT_MAP[raw];
 
-  switch (raw) {
-    case "Demand_ob_tap":
-      return {
-        event_raw: raw,
-        event_type: "ob_tap",
-        zone_type: "demand",
-        direction: "bullish"
-      };
-
-    case "Supply_ob_tap":
-      return {
-        event_raw: raw,
-        event_type: "ob_tap",
-        zone_type: "supply",
-        direction: "bearish"
-      };
-
-    case "bullish_choch_detected":
-      return {
-        event_raw: raw,
-        event_type: "choch",
-        zone_type: null,
-        direction: "bullish"
-      };
-
-    case "bearish_choch_detected":
-      return {
-        event_raw: raw,
-        event_type: "choch",
-        zone_type: null,
-        direction: "bearish"
-      };
-
-    default:
-      return {
-        event_raw: raw,
-        event_type: "unknown",
-        zone_type: null,
-        direction: null
-      };
+  if (!mapped) {
+    return {
+      event_raw: raw,
+      event_family: "unknown",
+      event_type: "unknown",
+      structure_type: null,
+      zone_type: null,
+      direction: null,
+      qualifiers: {}
+    };
   }
+
+  return {
+    event_raw: raw,
+    event_family: mapped.event_family,
+    event_type: mapped.event_type,
+    structure_type: mapped.structure_type,
+    zone_type: mapped.zone_type,
+    direction: mapped.direction,
+    qualifiers: {}
+  };
 }
 
 module.exports = {

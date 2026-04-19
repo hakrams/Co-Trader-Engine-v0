@@ -74,9 +74,12 @@ function parse(payload) {
     },
     normalized: {
       event_raw: normalizedEvent.event_raw,
+      event_family: normalizedEvent.event_family,
       event_type: normalizedEvent.event_type,
+      structure_type: normalizedEvent.structure_type,
       zone_type: normalizedEvent.zone_type,
       direction: normalizedEvent.direction,
+      qualifiers: normalizedEvent.qualifiers,
 
       symbol: rawSymbol,
       timeframe_raw: rawTimeframe,

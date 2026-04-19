@@ -29,19 +29,23 @@ app.post("/webhook", (req, res) => {
     console.log("[PARSED EVENT]", JSON.stringify(parsed, null, 2));
 
     state.addEvent(parsed);
-
     const eventType = parsed.normalized.event_type;
     const symbol = parsed.normalized.symbol;
     const timeframe = parsed.normalized.timeframe;
+    const direction = parsed.normalized.direction;
+    const currentSetup = state.getSetup(symbol, timeframe, direction);
+    const currentStage = currentSetup?.stage || null;
 
-    const nextState = logic.getNextState(eventType);
+    const nextState = logic.getNextState(eventType, currentStage);
 
     if (nextState) {
-      state.updateSetup(symbol, timeframe, eventType, nextState);
+      state.updateSetup(symbol, timeframe, direction, eventType, nextState);
+
+      const eligibility = state.evaluateEligibility();
+      state.setSetupEligibility(symbol, timeframe, direction, eligibility);
     } else {
       console.log(`[STATE] No mapping for event type: ${eventType}`);
     }
-
   } catch (error) {
     // ❗ IMPORTANT: DO NOT FAIL REQUEST
     console.log("[PARSER ERROR - NON BLOCKING]", error.message);
@@ -72,6 +76,83 @@ app.get("/api/raw-events", (req, res) => {
     latest: currentState.latestRawEvent,
     items: currentState.rawEvents
   });
+});
+
+app.post("/setup-scoring", (req, res) => {
+  try {
+    const { symbol, timeframe, direction, context_profile, scores } = req.body;
+
+    if (!symbol || !timeframe || !direction) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing setup identity (symbol, timeframe, direction)"
+      });
+    }
+
+    if (!context_profile) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing context_profile"
+      });
+    }
+
+    if (!scores) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing scores object"
+      });
+    }
+
+    const result = state.applySetupScoring(
+      symbol,
+      timeframe,
+      direction,
+      context_profile,
+      scores
+    );
+
+    if (!result.ok) {
+      return res.status(400).json({
+        ok: false,
+        error: result.error
+      });
+    }
+
+    res.status(200).json({
+      ok: true,
+      message: "Scoring applied successfully",
+      key: result.key,
+      scoring: result.scoring
+    });
+  } catch (error) {
+    console.error("[SCORING ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post("/risk/update", (req, res) => {
+  try {
+    const { settings, runtime } = req.body || {};
+
+    const updatedRisk = state.updateRiskState({ settings, runtime });
+
+    res.status(200).json({
+      ok: true,
+      message: "Risk state updated successfully",
+      risk: updatedRisk
+    });
+  } catch (error) {
+    console.error("[RISK UPDATE ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
 });
 
 app.post("/archive-reset", (req, res) => {

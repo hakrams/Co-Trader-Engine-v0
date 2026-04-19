@@ -3,47 +3,156 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Co-Trader Engine V0</title>
+  <title>Co-Trader Engine V1</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <main class="container">
-    <h1>Co-Trader Engine V0</h1>
-    <p class="subtitle">Prototype shell + Webhook Placeholder Observatory</p>
-
-    <section class="card">
-      <h2>System Status</h2>
-      <p id="status">Server connected. Dashboard page loaded.</p>
-      <p id="latest-event"></p>
-      <button id="archive-reset-btn" type="button">Archive & Reset Active</button>
-      <p id="archive-reset-status"></p>
-      <div id="dashboard-alert"></div>
-      <div id="setups"></div>
-      <div id="reactions"></div>
-      <div id="history"></div>
-    </section>
-
-    <section class="card">
-      <h2>Webhook Placeholders</h2>
-      <p id="raw-count">Raw events captured: 0</p>
-      <p id="raw-latest-meta">No raw payload yet.</p>
-
-      <div class="grid-2">
-        <div>
-          <h3>Latest Raw Payload</h3>
-          <pre id="raw-latest" class="json-box">Waiting for webhook...</pre>
-        </div>
-
-        <div>
-          <h3>Observed Field Summary</h3>
-          <pre id="raw-summary" class="json-box">No fields observed yet.</pre>
-        </div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <p class="eyebrow">Co-Trader Engine V1</p>
+        <h1>Control Panel</h1>
+        <p class="subtitle">Multi-page operator shell for runtime visibility.</p>
       </div>
 
-      <h3>Raw Payload History (Newest First)</h3>
-      <div id="raw-history" class="history-list"></div>
-    </section>
-  </main>
+      <nav class="page-nav" aria-label="Primary">
+        <button class="nav-btn is-active" type="button" data-page="overview">Overview</button>
+        <button class="nav-btn" type="button" data-page="setup-board">Setup Board</button>
+        <button class="nav-btn" type="button" data-page="decision-board">Decision Board</button>
+        <button class="nav-btn" type="button" data-page="raw-observatory">Raw Observatory</button>
+      </nav>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar card card-tight">
+        <div>
+          <p class="section-kicker">Operator View</p>
+          <h2 id="page-title">Overview</h2>
+        </div>
+        <div class="topbar-actions">
+          <button id="archive-reset-btn" class="primary-btn" type="button">Archive &amp; Reset Active</button>
+        </div>
+      </header>
+
+      <p id="archive-reset-status" class="inline-status"></p>
+      <div id="dashboard-alert" class="alert-banner">No new alerts yet.</div>
+
+      <section class="page is-active" data-page="overview">
+        <div class="overview-grid">
+          <section class="card metric-card">
+            <p class="metric-label">Connection</p>
+            <h3 id="status">Server connected. Dashboard page loaded.</h3>
+            <p class="metric-subtext">Frontend heartbeat and backend fetch status.</p>
+          </section>
+
+          <section class="card metric-card">
+            <p class="metric-label">Latest Event</p>
+            <h3 id="overview-latest-event">No events received yet.</h3>
+            <p id="overview-latest-event-meta" class="metric-subtext">Waiting for event stream.</p>
+          </section>
+
+          <section class="card metric-card">
+            <p class="metric-label">Setup Count</p>
+            <h3 id="overview-setup-count">0</h3>
+            <p class="metric-subtext">Tracked directional setup stories.</p>
+          </section>
+
+          <section class="card metric-card">
+            <p class="metric-label">Raw Events</p>
+            <h3 id="overview-raw-count">0</h3>
+            <p class="metric-subtext">Captured webhook payloads in observatory.</p>
+          </section>
+        </div>
+
+        <div class="two-column-layout">
+          <section class="card">
+            <div class="section-header">
+              <div>
+                <p class="section-kicker">Engine Summary</p>
+                <h3>Current Runtime Snapshot</h3>
+              </div>
+            </div>
+            <div id="overview-summary" class="stack-list empty-state">No engine summary yet.</div>
+          </section>
+
+          <section class="card">
+            <div class="section-header">
+              <div>
+                <p class="section-kicker">Recent Activity</p>
+                <h3>Latest History</h3>
+              </div>
+            </div>
+            <div id="overview-history" class="stack-list empty-state">No event history yet.</div>
+          </section>
+        </div>
+      </section>
+
+      <section class="page" data-page="setup-board">
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <p class="section-kicker">Operational View</p>
+              <h3>Setups Grouped by Final Decision</h3>
+            </div>
+          </div>
+          <div id="setup-board-groups" class="decision-groups empty-state">No setups tracked yet.</div>
+        </div>
+      </section>
+
+      <section class="page" data-page="decision-board">
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <p class="section-kicker">Decision Visibility</p>
+              <h3>Decision Board</h3>
+            </div>
+          </div>
+          <div id="decision-board-groups" class="decision-groups empty-state">No decisions available yet.</div>
+        </div>
+      </section>
+
+      <section class="page" data-page="raw-observatory">
+        <div class="card">
+          <div class="section-header">
+            <div>
+              <p class="section-kicker">Debug Observatory</p>
+              <h3>Raw Webhook Intake</h3>
+            </div>
+          </div>
+
+          <div class="overview-grid compact-grid">
+            <div class="metric-card metric-card-inline">
+              <p class="metric-label">Raw Event Count</p>
+              <h3 id="raw-count">0</h3>
+            </div>
+            <div class="metric-card metric-card-inline">
+              <p class="metric-label">Latest Raw Receipt</p>
+              <h3 id="raw-latest-meta">No raw payload yet.</h3>
+            </div>
+          </div>
+
+          <div class="two-column-layout">
+            <div>
+              <h4>Latest Raw Payload</h4>
+              <pre id="raw-latest" class="json-box">Waiting for webhook...</pre>
+            </div>
+            <div>
+              <h4>Observed Field Summary</h4>
+              <pre id="raw-summary" class="json-box">No fields observed yet.</pre>
+            </div>
+          </div>
+
+          <div class="section-header section-header-spaced">
+            <div>
+              <p class="section-kicker">Newest First</p>
+              <h3>Raw Payload History</h3>
+            </div>
+          </div>
+          <div id="raw-history" class="history-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <script src="/app.js"></script>
 </body>

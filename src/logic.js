@@ -1,30 +1,74 @@
-function getNextState(eventType) {
-  switch (eventType) {
-    case "choch":
-      return "waiting_for_ob_tap";
-
-    case "ob_tap":
-      return "ready_for_ltf";
-
-    default:
-      return null;
+function getNextState(eventType, currentStage = null) {
+  if (eventType === "structure_detected") {
+    return "structure_detected";
   }
+
+  if (eventType === "ob_tap") {
+    if (currentStage === "structure_detected") {
+      return "zone_interacted";
+    }
+
+    return null;
+  }
+
+  return null;
 }
 
-function getDecisionFromSetupState(setupState) {
-  switch (setupState) {
-    case "waiting_for_ob_tap":
-      return "monitoring";
-
-    case "ready_for_ltf":
-      return "actionable";
-
-    default:
-      return "none";
+function getFinalDecision({
+  setupStage,
+  eligibility = "eligible",
+  threshold = "none",
+  executionStatus = "invalid",
+  riskState = "risk_allowed"
+}) {
+  if (riskState === "risk_paused") {
+    return "paused";
   }
+
+  if (eligibility === "blocked") {
+    return "blocked";
+  }
+
+  if (executionStatus === "forced_trade" || executionStatus === "invalid") {
+    return "blocked";
+  }
+
+  if (threshold === "no_trade") {
+    return "blocked";
+  }
+
+  if (executionStatus === "almost_setup") {
+    return "monitor";
+  }
+
+  if (executionStatus === "pending_confirmation") {
+    return "qualified";
+  }
+
+  if (executionStatus === "valid") {
+    if (threshold === "A") {
+      return "actionable_high_priority";
+    }
+
+    if (threshold === "B") {
+      return "actionable";
+    }
+
+    return "actionable";
+  }
+
+  if (setupStage === "structure_detected") {
+    return "observe";
+  }
+
+  if (setupStage === "zone_interacted") {
+    return "monitor";
+  }
+
+  return "ignore";
 }
 
 module.exports = {
   getNextState,
-  getDecisionFromSetupState
+  getFinalDecision
 };
