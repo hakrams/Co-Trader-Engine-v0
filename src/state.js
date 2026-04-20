@@ -1084,9 +1084,11 @@ function evaluateExecutionValidationForSetup(setup) {
 
   if (checks.threshold_ok) {
     result.reasons.push("Threshold is tradeable.");
-  } else {
+  } else if (safeSetup?.scoring?.threshold === "no_trade") {
     result.missing.push("threshold_not_tradeable");
     result.forced_trade_flags.push("threshold_not_tradeable");
+  } else {
+    result.missing.push("threshold_missing");
   }
 
   if (checks.entry_model_available) {
@@ -1142,22 +1144,7 @@ function evaluateExecutionValidationForSetup(setup) {
     return result;
   }
 
-  if (
-    checks.structure_present &&
-    !checks.zone_context_present &&
-    checks.eligibility_ok &&
-    checks.threshold_ok
-  ) {
-    result.status = "almost_setup";
-    return result;
-  }
-
-  if (
-    checks.structure_present &&
-    checks.eligibility_ok &&
-    checks.threshold_ok &&
-    !checks.entry_model_available
-  ) {
+  if (checks.structure_present && checks.eligibility_ok) {
     result.status = "almost_setup";
     return result;
   }
@@ -1952,6 +1939,42 @@ function refreshAllLiquidityEngineeringStates() {
   return changed;
 }
 
+function refreshAllSetupDerivedLayers() {
+  let changed = false;
+
+  for (const key in state.setups) {
+    const existing = state.setups[key];
+
+    if (!existing || typeof existing !== "object") {
+      continue;
+    }
+
+    const before = JSON.stringify(existing);
+    const setup = ensureSetupHasExecutionValidation(
+      ensureSetupHasEntryModels(
+        ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(existing))
+      )
+    );
+
+    setup.entry_models = evaluateEntryModelsForSetup(setup);
+    setup.execution_validation = evaluateExecutionValidationForSetup(setup);
+
+    const after = JSON.stringify(setup);
+
+    if (before !== after) {
+      changed = true;
+    }
+
+    state.setups[key] = setup;
+  }
+
+  if (changed) {
+    saveStateToFile();
+  }
+
+  return changed;
+}
+
 function buildNotificationSnapshots() {
   const decisions = {};
   const liquidityStatuses = {};
@@ -2350,6 +2373,7 @@ module.exports = {
   trackLiquidityEngineeringObTap,
   refreshLiquidityEngineeringForSetup,
   refreshAllLiquidityEngineeringStates,
+  refreshAllSetupDerivedLayers,
   getSetupDecisionForReset,
   shouldPreserveSetupOnReset,
   getProtectedSetupsForReset,

@@ -74,6 +74,7 @@ app.post("/webhook", (req, res) => {
 
 app.get("/state", (req, res) => {
   state.refreshAllLiquidityEngineeringStates();
+  state.refreshAllSetupDerivedLayers();
   state.processNotificationTriggers();
 
   const currentState = state.getState();
@@ -87,6 +88,7 @@ app.get("/state", (req, res) => {
 
 app.get("/api/raw-events", (req, res) => {
   state.refreshAllLiquidityEngineeringStates();
+  state.refreshAllSetupDerivedLayers();
   state.processNotificationTriggers();
 
   const currentState = state.getState();

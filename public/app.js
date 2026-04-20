@@ -115,6 +115,29 @@ function joinList(items, fallback = "none") {
   return items.join(", ");
 }
 
+function formatTimestamp(value) {
+  if (!value) return "none";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+
+  return parsed.toLocaleString([], {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
+
+function updateSystemClock() {
+  setText("system-clock", `System time: ${formatTimestamp(new Date().toISOString())}`);
+}
+
 function getDecisionClass(decision) {
   if (decision === "actionable" || decision === "actionable_high_priority") {
     return "badge-good";
@@ -238,6 +261,8 @@ function getReactionRecords(data) {
         item.liquidityEngineeringSummary?.waitingForColorSwitch ||
         setup.liquidity_engineering?.waiting_for_color_switch ||
         false,
+      createdAt: setup.createdAt || null,
+      updatedAt: setup.updatedAt || null,
       entryContext: entrySummary.context || setup.entry_models?.context_type || "unknown",
       availableModels: entrySummary.available || setup.entry_models?.available || [],
       blockedModels: entrySummary.blocked || [],
@@ -287,6 +312,30 @@ function getActiveSetupSummary(records) {
     .join(", ")})`;
 }
 
+function getActiveSetupRecords(records) {
+  const activeDecisions = new Set([
+    "monitor",
+    "qualified",
+    "actionable",
+    "actionable_high_priority",
+    "paused"
+  ]);
+  const activeLiquidityStatuses = new Set([
+    "active",
+    "monitoring",
+    "ready_for_color_switch"
+  ]);
+
+  return records.filter((record) => {
+    return (
+      activeDecisions.has(record.decision) ||
+      activeLiquidityStatuses.has(record.liquidityStatus) ||
+      record.executionStatus === "pending_confirmation" ||
+      record.waitingForColorSwitch
+    );
+  });
+}
+
 function renderOverview(data) {
   const latestNormalized = data.latestEvent?.normalized;
   const setups = data.setups || {};
@@ -312,25 +361,25 @@ function renderOverview(data) {
 
   const summaryEl = document.getElementById("overview-summary");
   if (summaryEl) {
-    summaryEl.classList.remove("empty-state");
-    summaryEl.innerHTML = [
-      ["Risk", `${risk.status?.state || "risk_allowed"} (${joinList(risk.status?.reasons || [])})`],
-      [
-        "Controls",
-        `processing=${controls.processingEnabled !== false}, session=${controls.sessionEligible !== false}`
-      ],
-      ["Active Setups", getActiveSetupSummary(reactionRecords)],
-      ["Latest Raw Event", data.latestRawEvent?.receivedAt || "none"]
-    ]
-      .map(([label, value]) => {
-        return `
-          <div class="summary-item">
-            <strong>${escapeHtml(label)}</strong><br />
-            <span>${escapeHtml(value)}</span>
+    const activeRecords = getActiveSetupRecords(reactionRecords);
+
+    if (!activeRecords.length) {
+      summaryEl.classList.add("empty-state");
+      summaryEl.textContent = "No active setups right now.";
+    } else {
+      summaryEl.classList.remove("empty-state");
+      summaryEl.innerHTML = `
+        <div class="group-panel">
+          <div class="group-header">
+            <h4>Active setups</h4>
+            <span class="group-count">${escapeHtml(getActiveSetupSummary(reactionRecords))}</span>
           </div>
-        `;
-      })
-      .join("");
+          <div class="card-grid">
+            ${activeRecords.map(renderSetupCard).join("")}
+          </div>
+        </div>
+      `;
+    }
   }
 
   const historyEl = document.getElementById("overview-history");
@@ -353,6 +402,7 @@ function renderOverview(data) {
               <div class="muted">
                 ${escapeHtml(normalized.symbol || "unknown")} ${escapeHtml(normalized.timeframe || "unknown")}
                 | ${escapeHtml(normalized.event_family || "unknown")} / ${escapeHtml(normalized.event_type || "unknown")}
+                | ${escapeHtml(formatTimestamp(normalized.times?.timestamp || normalized.times?.received_at))}
               </div>
             </div>
           `;
@@ -568,6 +618,7 @@ function renderSetupCard(record) {
         <div><span>Available models</span><strong>${escapeHtml(joinList(record.availableModels))}</strong></div>
         <div><span>Pending models</span><strong>${escapeHtml(joinList(record.pendingModels))}</strong></div>
         <div><span>Entry context</span><strong>${escapeHtml(record.entryContext)}</strong></div>
+        <div><span>Updated</span><strong>${escapeHtml(formatTimestamp(record.updatedAt))}</strong></div>
       </div>
     </article>
   `;
@@ -886,5 +937,7 @@ if (archiveResetBtn) {
 
 setupPageNavigation();
 setupNotificationControls();
+updateSystemClock();
 loadAll();
+setInterval(updateSystemClock, 1000);
 setInterval(loadAll, 2000);

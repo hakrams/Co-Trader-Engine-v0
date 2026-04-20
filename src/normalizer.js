@@ -125,6 +125,38 @@ const EVENT_MAP = {
     direction: "bearish"
   },
 
+  internal_bullish_choch_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "choch",
+    zone_type: null,
+    direction: "bullish"
+  },
+
+  internal_bearish_choch_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "choch",
+    zone_type: null,
+    direction: "bearish"
+  },
+
+  internal_bullish_bos_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "bos",
+    zone_type: null,
+    direction: "bullish"
+  },
+
+  internal_bearish_bos_detected: {
+    event_family: "structure",
+    event_type: "structure_detected",
+    structure_type: "bos",
+    zone_type: null,
+    direction: "bearish"
+  },
+
   bullish_ob: {
     event_family: "zone_creation",
     event_type: "ob_created",
@@ -156,7 +188,7 @@ function normalizeEventName(eventName) {
   }
 
   const raw = eventName.trim();
-  const mapped = EVENT_MAP[raw];
+  const mapped = EVENT_MAP[raw] || EVENT_MAP[raw.toLowerCase()];
 
   if (!mapped) {
     return {
