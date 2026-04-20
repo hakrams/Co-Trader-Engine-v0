@@ -58,6 +58,8 @@ app.post("/webhook", (req, res) => {
     } else {
       console.log(`[STATE] No mapping for event type: ${eventType}`);
     }
+
+    state.processNotificationTriggers();
   } catch (error) {
     // ❗ IMPORTANT: DO NOT FAIL REQUEST
     console.log("[PARSER ERROR - NON BLOCKING]", error.message);
@@ -72,6 +74,7 @@ app.post("/webhook", (req, res) => {
 
 app.get("/state", (req, res) => {
   state.refreshAllLiquidityEngineeringStates();
+  state.processNotificationTriggers();
 
   const currentState = state.getState();
   const reactions = state.getReactions();
@@ -84,6 +87,7 @@ app.get("/state", (req, res) => {
 
 app.get("/api/raw-events", (req, res) => {
   state.refreshAllLiquidityEngineeringStates();
+  state.processNotificationTriggers();
 
   const currentState = state.getState();
 
@@ -134,6 +138,8 @@ app.post("/setup-scoring", (req, res) => {
       });
     }
 
+    state.processNotificationTriggers();
+
     res.status(200).json({
       ok: true,
       message: "Scoring applied successfully",
@@ -155,6 +161,7 @@ app.post("/risk/update", (req, res) => {
     const { settings, runtime } = req.body || {};
 
     const updatedRisk = state.updateRiskState({ settings, runtime });
+    state.processNotificationTriggers();
 
     res.status(200).json({
       ok: true,
@@ -163,6 +170,52 @@ app.post("/risk/update", (req, res) => {
     });
   } catch (error) {
     console.error("[RISK UPDATE ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post("/notifications/settings", (req, res) => {
+  try {
+    const updatedSettings = state.updateNotificationSettings(req.body || {});
+    state.processNotificationTriggers({ initializeOnly: true });
+
+    res.status(200).json({
+      ok: true,
+      message: "Notification settings updated successfully",
+      notificationSettings: state.getPublicNotificationSettings(updatedSettings)
+    });
+  } catch (error) {
+    console.error("[NOTIFICATION SETTINGS ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post("/notifications/test", (req, res) => {
+  try {
+    const notification = state.addNotification({
+      type: "telegram_test",
+      priority: "critical",
+      message: "Co-Trader Engine test notification.",
+      metadata: {
+        source: "manual_test"
+      }
+    });
+
+    res.status(200).json({
+      ok: true,
+      message: "Test notification created",
+      notification
+    });
+  } catch (error) {
+    console.error("[NOTIFICATION TEST ERROR]", error.message);
 
     res.status(500).json({
       ok: false,
@@ -203,7 +256,8 @@ app.post("/archive-reset", (req, res) => {
     res.status(200).json({
       ok: true,
       message: "Current state archived and active state reset",
-      archiveFile: archiveResult.archiveFile
+      archiveFile: archiveResult.archiveFile,
+      preservedSetupKeys: resetResult.preservedSetupKeys || []
     });
   } catch (error) {
     console.error("[ARCHIVE RESET ERROR]", error.message);

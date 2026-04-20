@@ -85,6 +85,69 @@
             <div id="overview-history" class="stack-list empty-state">No event history yet.</div>
           </section>
         </div>
+
+        <section class="card notification-controls-card">
+          <div class="section-header">
+            <div>
+              <p class="section-kicker">Alert Controls</p>
+              <h3>Notifications</h3>
+            </div>
+            <p id="notification-settings-status" class="inline-status compact-status"></p>
+          </div>
+
+          <div class="settings-grid">
+            <label class="toggle-row">
+              <input id="notify-browser" type="checkbox" />
+              <span>Browser</span>
+            </label>
+            <label class="toggle-row">
+              <input id="notify-sound" type="checkbox" />
+              <span>Sound</span>
+            </label>
+            <label class="toggle-row">
+              <input id="notify-visual-critical" type="checkbox" />
+              <span>Critical visual</span>
+            </label>
+            <label class="toggle-row">
+              <input id="notify-telegram" type="checkbox" />
+              <span>Telegram</span>
+            </label>
+            <label class="input-row">
+              <span>Bot token</span>
+              <input
+                id="notify-telegram-token"
+                type="password"
+                autocomplete="off"
+                placeholder="Paste token"
+              />
+            </label>
+            <label class="input-row">
+              <span>Chat ID</span>
+              <input
+                id="notify-telegram-chat-id"
+                type="text"
+                autocomplete="off"
+                placeholder="Paste chat ID"
+              />
+            </label>
+            <label class="toggle-row">
+              <input id="notify-actionable-emergency" type="checkbox" />
+              <span>Actionable emergency</span>
+            </label>
+            <label class="select-row">
+              <span>Minimum priority</span>
+              <select id="notify-minimum-priority">
+                <option value="info">Info</option>
+                <option value="watch">Watch</option>
+                <option value="important">Important</option>
+                <option value="critical">Critical</option>
+              </select>
+            </label>
+            <button id="notify-test-btn" class="secondary-btn" type="button">
+              Send test
+            </button>
+          </div>
+        </section>
       </section>
 
       <section class="page" data-page="setup-board">

@@ -1,4 +1,5 @@
 const fs = require("fs");
+const https = require("https");
 const path = require("path");
 const { getFinalDecision } = require("./logic");
 
@@ -179,6 +180,352 @@ function createDefaultRiskState() {
   };
 }
 
+function createDefaultNotificationSettings() {
+  return {
+    browserEnabled: true,
+    soundEnabled: false,
+    visualCriticalEnabled: true,
+    telegramEnabled: false,
+    telegramBotToken: "",
+    telegramChatId: "",
+    minimumPriority: "watch",
+    actionableEmergencyMode: true
+  };
+}
+
+function createDefaultNotificationSnapshots() {
+  return {
+    initialized: false,
+    decisions: {},
+    liquidityStatuses: {},
+    riskState: null
+  };
+}
+
+function ensureNotificationSnapshots(snapshots) {
+  const base = createDefaultNotificationSnapshots();
+  const incoming =
+    snapshots && typeof snapshots === "object" && !Array.isArray(snapshots)
+      ? snapshots
+      : {};
+
+  return {
+    initialized: incoming.initialized === true,
+    decisions:
+      incoming.decisions &&
+      typeof incoming.decisions === "object" &&
+      !Array.isArray(incoming.decisions)
+        ? incoming.decisions
+        : base.decisions,
+    liquidityStatuses:
+      incoming.liquidityStatuses &&
+      typeof incoming.liquidityStatuses === "object" &&
+      !Array.isArray(incoming.liquidityStatuses)
+        ? incoming.liquidityStatuses
+        : base.liquidityStatuses,
+    riskState:
+      typeof incoming.riskState === "string" || incoming.riskState === null
+        ? incoming.riskState
+        : base.riskState
+  };
+}
+
+function normalizeSecret(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function maskSecret(value) {
+  const secret = normalizeSecret(value);
+
+  if (!secret) {
+    return "";
+  }
+
+  if (secret.length <= 8) {
+    return "*".repeat(secret.length);
+  }
+
+  return `${secret.slice(0, 6)}...${secret.slice(-4)}`;
+}
+
+function ensureNotificationSettings(settings) {
+  const base = createDefaultNotificationSettings();
+  const incoming = settings && typeof settings === "object" ? settings : {};
+  const allowedPriorities = new Set(["info", "watch", "important", "critical"]);
+
+  return {
+    browserEnabled:
+      typeof incoming.browserEnabled === "boolean"
+        ? incoming.browserEnabled
+        : base.browserEnabled,
+    soundEnabled:
+      typeof incoming.soundEnabled === "boolean"
+        ? incoming.soundEnabled
+        : base.soundEnabled,
+    visualCriticalEnabled:
+      typeof incoming.visualCriticalEnabled === "boolean"
+        ? incoming.visualCriticalEnabled
+        : base.visualCriticalEnabled,
+    telegramEnabled:
+      typeof incoming.telegramEnabled === "boolean"
+        ? incoming.telegramEnabled
+        : base.telegramEnabled,
+    telegramBotToken:
+      typeof incoming.telegramBotToken === "string"
+        ? incoming.telegramBotToken.trim()
+        : base.telegramBotToken,
+    telegramChatId:
+      typeof incoming.telegramChatId === "string"
+        ? incoming.telegramChatId.trim()
+        : base.telegramChatId,
+    minimumPriority:
+      typeof incoming.minimumPriority === "string" &&
+      allowedPriorities.has(incoming.minimumPriority)
+        ? incoming.minimumPriority
+        : base.minimumPriority,
+    actionableEmergencyMode:
+      typeof incoming.actionableEmergencyMode === "boolean"
+        ? incoming.actionableEmergencyMode
+        : base.actionableEmergencyMode
+  };
+}
+
+function getPublicNotificationSettings(settings = state.notificationSettings) {
+  const safeSettings = ensureNotificationSettings(settings);
+
+  return {
+    browserEnabled: safeSettings.browserEnabled,
+    soundEnabled: safeSettings.soundEnabled,
+    visualCriticalEnabled: safeSettings.visualCriticalEnabled,
+    telegramEnabled: safeSettings.telegramEnabled,
+    telegramConfigured:
+      Boolean(safeSettings.telegramBotToken) &&
+      Boolean(safeSettings.telegramChatId),
+    telegramBotTokenMasked: maskSecret(safeSettings.telegramBotToken),
+    telegramChatIdMasked: maskSecret(safeSettings.telegramChatId),
+    minimumPriority: safeSettings.minimumPriority,
+    actionableEmergencyMode: safeSettings.actionableEmergencyMode
+  };
+}
+
+function createNotificationRecord({
+  type,
+  priority = "info",
+  setupKey = null,
+  message,
+  metadata = {}
+} = {}) {
+  const now = new Date().toISOString();
+
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type:
+      typeof type === "string" && type.trim()
+        ? type.trim()
+        : "general_notice",
+    priority:
+      typeof priority === "string" && priority.trim()
+        ? priority.trim()
+        : "info",
+    setupKey:
+      typeof setupKey === "string" && setupKey.trim()
+        ? setupKey.trim()
+        : null,
+    message:
+      typeof message === "string" && message.trim()
+        ? message.trim()
+        : "Notification recorded.",
+    metadata:
+      metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? metadata
+        : {},
+    read: false,
+    createdAt: now
+  };
+}
+
+function ensureNotificationRecord(notification) {
+  if (!notification || typeof notification !== "object") {
+    return null;
+  }
+
+  const base = createNotificationRecord();
+
+  return {
+    ...base,
+    ...notification,
+    type:
+      typeof notification.type === "string" && notification.type.trim()
+        ? notification.type.trim()
+        : base.type,
+    priority:
+      typeof notification.priority === "string" &&
+      notification.priority.trim()
+        ? notification.priority.trim()
+        : base.priority,
+    setupKey:
+      typeof notification.setupKey === "string" &&
+      notification.setupKey.trim()
+        ? notification.setupKey.trim()
+        : null,
+    message:
+      typeof notification.message === "string" && notification.message.trim()
+        ? notification.message.trim()
+        : base.message,
+    metadata:
+      notification.metadata &&
+      typeof notification.metadata === "object" &&
+      !Array.isArray(notification.metadata)
+        ? notification.metadata
+        : {},
+    read: notification.read === true,
+    createdAt:
+      typeof notification.createdAt === "string" &&
+      notification.createdAt.trim()
+        ? notification.createdAt.trim()
+        : base.createdAt
+  };
+}
+
+function ensureNotificationList(notifications) {
+  if (!Array.isArray(notifications)) {
+    return [];
+  }
+
+  return notifications
+    .map(ensureNotificationRecord)
+    .filter(Boolean)
+    .slice(0, 100);
+}
+
+const NOTIFICATION_PRIORITY_RANK = {
+  info: 1,
+  watch: 2,
+  important: 3,
+  critical: 4
+};
+
+function isNotificationPriorityAllowed(priority, settings) {
+  const safeSettings = ensureNotificationSettings(settings);
+  const minimumRank =
+    NOTIFICATION_PRIORITY_RANK[safeSettings.minimumPriority] ||
+    NOTIFICATION_PRIORITY_RANK.watch;
+  const currentRank =
+    NOTIFICATION_PRIORITY_RANK[priority] || NOTIFICATION_PRIORITY_RANK.info;
+
+  return currentRank >= minimumRank;
+}
+
+function getDecisionNotificationPriority(decision) {
+  if (decision === "actionable" || decision === "actionable_high_priority") {
+    return "critical";
+  }
+
+  if (decision === "qualified" || decision === "paused") {
+    return "important";
+  }
+
+  if (decision === "monitor" || decision === "blocked") {
+    return "watch";
+  }
+
+  return "info";
+}
+
+function getLiquidityNotificationPriority(status) {
+  if (status === "ready_for_color_switch") {
+    return "important";
+  }
+
+  if (status === "active" || status === "monitoring") {
+    return "watch";
+  }
+
+  return "info";
+}
+
+function formatNotificationForTelegram(notification) {
+  const lines = [
+    `[${String(notification.priority || "info").toUpperCase()}] ${notification.type}`,
+    notification.message
+  ];
+
+  if (notification.setupKey) {
+    lines.push(`Setup: ${notification.setupKey}`);
+  }
+
+  if (notification.createdAt) {
+    lines.push(`Time: ${notification.createdAt}`);
+  }
+
+  return lines.join("\n");
+}
+
+function sendTelegramNotification(notification) {
+  const settings = ensureNotificationSettings(state.notificationSettings);
+
+  if (!settings.telegramEnabled) {
+    return;
+  }
+
+  if (!settings.telegramBotToken || !settings.telegramChatId) {
+    console.warn("[TELEGRAM] Missing bot token or chat ID. Notification not sent.");
+    return;
+  }
+
+  if (!isNotificationPriorityAllowed(notification.priority, settings)) {
+    return;
+  }
+
+  const body = JSON.stringify({
+    chat_id: settings.telegramChatId,
+    text: formatNotificationForTelegram(notification),
+    disable_web_page_preview: true
+  });
+
+  const req = https.request(
+    {
+      hostname: "api.telegram.org",
+      method: "POST",
+      path: `/bot${settings.telegramBotToken}/sendMessage`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body)
+      },
+      timeout: 8000
+    },
+    (res) => {
+      let responseBody = "";
+
+      res.on("data", (chunk) => {
+        responseBody += chunk;
+      });
+
+      res.on("end", () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          console.warn(
+            `[TELEGRAM] Send failed with status ${res.statusCode}: ${responseBody}`
+          );
+          return;
+        }
+
+        console.log(`[TELEGRAM] Notification sent: ${notification.id}`);
+      });
+    }
+  );
+
+  req.on("error", (error) => {
+    console.warn("[TELEGRAM] Send error:", error.message);
+  });
+
+  req.on("timeout", () => {
+    req.destroy(new Error("Telegram request timed out"));
+  });
+
+  req.write(body);
+  req.end();
+}
+
 function ensureRiskState(risk) {
   const base = createDefaultRiskState();
   const incoming = risk && typeof risk === "object" ? risk : {};
@@ -331,6 +678,110 @@ function updateRiskState({ settings = null, runtime = null } = {}) {
   saveStateToFile();
 
   return state.risk;
+}
+
+function addNotification({
+  type,
+  priority = "info",
+  setupKey = null,
+  message,
+  metadata = {}
+} = {}) {
+  const notification = createNotificationRecord({
+    type,
+    priority,
+    setupKey,
+    message,
+    metadata
+  });
+
+  state.notifications = ensureNotificationList([
+    notification,
+    ...(state.notifications || [])
+  ]);
+
+  saveStateToFile();
+  sendTelegramNotification(notification);
+
+  return notification;
+}
+
+function updateNotificationSettings(settingsPatch = {}) {
+  if (
+    !settingsPatch ||
+    typeof settingsPatch !== "object" ||
+    Array.isArray(settingsPatch)
+  ) {
+    return ensureNotificationSettings(state.notificationSettings);
+  }
+
+  const nextSettings = ensureNotificationSettings({
+    ...state.notificationSettings,
+    ...settingsPatch
+  });
+
+  if (
+    nextSettings.telegramEnabled &&
+    (!nextSettings.telegramBotToken || !nextSettings.telegramChatId)
+  ) {
+    throw new Error("Telegram bot token and chat ID are required before enabling Telegram alerts");
+  }
+
+  state.notificationSettings = nextSettings;
+
+  saveStateToFile();
+
+  return state.notificationSettings;
+}
+
+function markNotificationRead(notificationId) {
+  if (typeof notificationId !== "string" || !notificationId.trim()) {
+    return {
+      ok: false,
+      error: "Missing notification id"
+    };
+  }
+
+  let found = false;
+
+  state.notifications = ensureNotificationList(state.notifications).map(
+    (notification) => {
+      if (notification.id !== notificationId) {
+        return notification;
+      }
+
+      found = true;
+      return {
+        ...notification,
+        read: true
+      };
+    }
+  );
+
+  if (found) {
+    saveStateToFile();
+  }
+
+  return {
+    ok: found,
+    error: found ? null : "Notification not found"
+  };
+}
+
+function markAllNotificationsRead() {
+  state.notifications = ensureNotificationList(state.notifications).map(
+    (notification) => ({
+      ...notification,
+      read: true
+    })
+  );
+
+  saveStateToFile();
+
+  return {
+    ok: true,
+    notifications: state.notifications
+  };
 }
 
 function ensureSetupHasLiquidityEngineering(setup) {
@@ -978,6 +1429,9 @@ function applySetupScoring(symbol, timeframe, direction, contextProfile, scores)
 const defaultState = {
   latestEvent: null,
   risk: createDefaultRiskState(),
+  notificationSettings: createDefaultNotificationSettings(),
+  notificationSnapshots: createDefaultNotificationSnapshots(),
+  notifications: [],
   history: [],
   setups: {},
   rawEvents: [],
@@ -1011,6 +1465,13 @@ function loadStateFromFile() {
     return {
       latestEvent: parsed.latestEvent ?? null,
       risk: ensureRiskState(parsed.risk),
+      notificationSettings: ensureNotificationSettings(
+        parsed.notificationSettings
+      ),
+      notificationSnapshots: ensureNotificationSnapshots(
+        parsed.notificationSnapshots
+      ),
+      notifications: ensureNotificationList(parsed.notifications),
       history: Array.isArray(parsed.history) ? parsed.history : [],
       setups: safeSetups,
       rawEvents: Array.isArray(parsed.rawEvents) ? parsed.rawEvents : [],
@@ -1081,24 +1542,98 @@ function archiveCurrentState() {
   }
 }
 
+function getSetupDecisionForReset(setup) {
+  const safeSetup = ensureSetupHasExecutionValidation(
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+    )
+  );
+
+  return getFinalDecision({
+    setupStage: safeSetup?.stage || null,
+    eligibility: safeSetup?.eligibility || "eligible",
+    threshold: safeSetup?.scoring?.threshold || "none",
+    executionStatus: safeSetup.execution_validation?.status || "invalid",
+    riskState: state.risk?.status?.state || "risk_allowed"
+  });
+}
+
+function shouldPreserveSetupOnReset(setup) {
+  const safeSetup = ensureSetupHasExecutionValidation(
+    ensureSetupHasEntryModels(
+      ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
+    )
+  );
+  const decision = getSetupDecisionForReset(safeSetup);
+  const protectedDecisions = new Set([
+    "monitor",
+    "qualified",
+    "actionable",
+    "actionable_high_priority",
+    "paused"
+  ]);
+  const protectedLiquidityStatuses = new Set([
+    "active",
+    "monitoring",
+    "ready_for_color_switch"
+  ]);
+
+  return (
+    protectedDecisions.has(decision) ||
+    protectedLiquidityStatuses.has(
+      safeSetup.liquidity_engineering?.status || "inactive"
+    ) ||
+    safeSetup.execution_validation?.status === "pending_confirmation"
+  );
+}
+
+function getProtectedSetupsForReset() {
+  const protectedSetups = {};
+
+  for (const key in state.setups) {
+    const setup = state.setups[key];
+
+    if (setup && shouldPreserveSetupOnReset(setup)) {
+      protectedSetups[key] = setup;
+    }
+  }
+
+  return protectedSetups;
+}
+
 function resetActiveState() {
+  const existingNotificationSettings = ensureNotificationSettings(
+    state.notificationSettings
+  );
+  const protectedSetups = getProtectedSetupsForReset();
+
   state.latestEvent = null;
   state.risk = createDefaultRiskState();
+  state.notificationSettings = existingNotificationSettings;
+  state.notificationSnapshots = createDefaultNotificationSnapshots();
+  state.notifications = [];
   state.history = [];
-  state.setups = {};
+  state.setups = protectedSetups;
   state.rawEvents = [];
   state.latestRawEvent = null;
 
   saveStateToFile();
 
   return {
-    ok: true
+    ok: true,
+    preservedSetupKeys: Object.keys(protectedSetups)
   };
 }
 
 const state = loadStateFromFile();
 state.risk = ensureRiskState(state.risk);
 state.risk.status = evaluateRiskStatus(state.risk);
+state.notificationSettings = ensureNotificationSettings(
+  state.notificationSettings
+);
+state.notificationSnapshots = ensureNotificationSnapshots(
+  state.notificationSnapshots
+);
 
 function getKey(symbol, timeframe, direction) {
   return `${symbol}_${timeframe}_${direction}`;
@@ -1417,6 +1952,119 @@ function refreshAllLiquidityEngineeringStates() {
   return changed;
 }
 
+function buildNotificationSnapshots() {
+  const decisions = {};
+  const liquidityStatuses = {};
+  const reactions = getReactions();
+
+  for (const [key, reaction] of Object.entries(reactions)) {
+    decisions[key] = reaction.decision || "unknown";
+    liquidityStatuses[key] =
+      reaction.setup?.liquidity_engineering?.status || "inactive";
+  }
+
+  return {
+    initialized: true,
+    decisions,
+    liquidityStatuses,
+    riskState: ensureRiskState(state.risk).status.state
+  };
+}
+
+function processNotificationTriggers({ initializeOnly = false } = {}) {
+  const previousSnapshots = ensureNotificationSnapshots(
+    state.notificationSnapshots
+  );
+  const currentSnapshots = buildNotificationSnapshots();
+  const createdNotifications = [];
+
+  if (initializeOnly || !previousSnapshots.initialized) {
+    state.notificationSnapshots = currentSnapshots;
+    saveStateToFile();
+    return createdNotifications;
+  }
+
+  for (const [key, decision] of Object.entries(currentSnapshots.decisions)) {
+    const previousDecision = previousSnapshots.decisions[key] || null;
+
+    if (previousDecision === decision) {
+      continue;
+    }
+
+    const priority = getDecisionNotificationPriority(decision);
+
+    if (!isNotificationPriorityAllowed(priority, state.notificationSettings)) {
+      continue;
+    }
+
+    createdNotifications.push(
+      addNotification({
+        type: "decision_changed",
+        priority,
+        setupKey: key,
+        message: `${key} decision changed from ${previousDecision || "none"} to ${decision}.`,
+        metadata: {
+          previousDecision,
+          decision
+        }
+      })
+    );
+  }
+
+  for (const [key, status] of Object.entries(
+    currentSnapshots.liquidityStatuses
+  )) {
+    const previousStatus = previousSnapshots.liquidityStatuses[key] || null;
+
+    if (previousStatus === status || status === "inactive") {
+      continue;
+    }
+
+    const priority = getLiquidityNotificationPriority(status);
+
+    if (!isNotificationPriorityAllowed(priority, state.notificationSettings)) {
+      continue;
+    }
+
+    createdNotifications.push(
+      addNotification({
+        type: "liquidity_engineering_status_changed",
+        priority,
+        setupKey: key,
+        message: `${key} Liquidity Engineering changed from ${previousStatus || "none"} to ${status}.`,
+        metadata: {
+          previousStatus,
+          status
+        }
+      })
+    );
+  }
+
+  if (previousSnapshots.riskState !== currentSnapshots.riskState) {
+    const priority =
+      currentSnapshots.riskState === "risk_paused" ? "critical" : "important";
+
+    if (isNotificationPriorityAllowed(priority, state.notificationSettings)) {
+      createdNotifications.push(
+        addNotification({
+          type: "risk_state_changed",
+          priority,
+          message: `Risk state changed from ${previousSnapshots.riskState || "none"} to ${currentSnapshots.riskState}.`,
+          metadata: {
+            previousRiskState: previousSnapshots.riskState,
+            riskState: currentSnapshots.riskState
+          }
+        })
+      );
+    }
+  }
+
+  state.notificationSnapshots = currentSnapshots;
+  saveStateToFile();
+
+  return createdNotifications;
+}
+
 function addRawEvent(payload) {
   const entry = {
     id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
@@ -1579,6 +2227,9 @@ function getState() {
   return {
     ...state,
     risk: ensureRiskState(state.risk),
+    notificationSettings: getPublicNotificationSettings(),
+    notificationSnapshots: ensureNotificationSnapshots(state.notificationSnapshots),
+    notifications: ensureNotificationList(state.notifications),
     setups: safeSetups
   };
 }
@@ -1658,6 +2309,21 @@ module.exports = {
   getReactions,
   archiveCurrentState,
   resetActiveState,
+  createDefaultNotificationSettings,
+  ensureNotificationSettings,
+  getPublicNotificationSettings,
+  createDefaultNotificationSnapshots,
+  ensureNotificationSnapshots,
+  createNotificationRecord,
+  ensureNotificationRecord,
+  ensureNotificationList,
+  addNotification,
+  updateNotificationSettings,
+  markNotificationRead,
+  markAllNotificationsRead,
+  buildNotificationSnapshots,
+  processNotificationTriggers,
+  sendTelegramNotification,
   evaluateEligibility,
   setSetupEligibility,
   createDefaultScoring,
@@ -1684,6 +2350,9 @@ module.exports = {
   trackLiquidityEngineeringObTap,
   refreshLiquidityEngineeringForSetup,
   refreshAllLiquidityEngineeringStates,
+  getSetupDecisionForReset,
+  shouldPreserveSetupOnReset,
+  getProtectedSetupsForReset,
   buildExecutionValidationChecks,
   evaluateExecutionValidationForSetup,
   refreshSetupExecutionValidation

@@ -1,7 +1,3 @@
-if ("Notification" in window && Notification.permission === "default") {
-  Notification.requestPermission();
-}
-
 const DECISION_ORDER = [
   "actionable_high_priority",
   "actionable",
@@ -15,14 +11,86 @@ const DECISION_ORDER = [
   "unknown"
 ];
 
+const PRIORITY_RANK = {
+  info: 1,
+  watch: 2,
+  important: 3,
+  critical: 4
+};
+
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  browserEnabled: true,
+  soundEnabled: false,
+  visualCriticalEnabled: true,
+  telegramEnabled: false,
+  telegramConfigured: false,
+  telegramBotTokenMasked: "",
+  telegramChatIdMasked: "",
+  minimumPriority: "watch",
+  actionableEmergencyMode: true
+};
+
 let previousReactions = JSON.parse(
   localStorage.getItem("previousReactions") || "{}"
 );
 
+let currentNotificationSettings = { ...DEFAULT_NOTIFICATION_SETTINGS };
+
+function normalizeNotificationSettings(settings) {
+  return {
+    ...DEFAULT_NOTIFICATION_SETTINGS,
+    ...(settings && typeof settings === "object" ? settings : {})
+  };
+}
+
+function isPriorityAllowed(priority, settings = currentNotificationSettings) {
+  const minimumRank = PRIORITY_RANK[settings.minimumPriority] || PRIORITY_RANK.watch;
+  const currentRank = PRIORITY_RANK[priority] || PRIORITY_RANK.info;
+  return currentRank >= minimumRank;
+}
+
+function getDecisionPriority(decision) {
+  if (decision === "actionable" || decision === "actionable_high_priority") {
+    return "critical";
+  }
+
+  if (decision === "qualified" || decision === "paused") {
+    return "important";
+  }
+
+  if (decision === "monitor" || decision === "blocked") {
+    return "watch";
+  }
+
+  return "info";
+}
+
 function showBrowserNotification(title, body) {
+  if (!currentNotificationSettings.browserEnabled) return;
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
   new Notification(title, { body });
+}
+
+function playCriticalSound() {
+  if (!currentNotificationSettings.soundEnabled) return;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+
+  const audioContext = new AudioContext();
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+
+  oscillator.type = "square";
+  oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+  gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.16, audioContext.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.45);
+
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start();
+  oscillator.stop(audioContext.currentTime + 0.5);
 }
 
 function safeJson(value) {
@@ -162,12 +230,61 @@ function getReactionRecords(data) {
         executionSummary.forcedTradeFlags ||
         setup.execution_validation?.forced_trade_flags ||
         [],
+      liquidityStatus:
+        item.liquidityEngineeringSummary?.status ||
+        setup.liquidity_engineering?.status ||
+        "inactive",
+      waitingForColorSwitch:
+        item.liquidityEngineeringSummary?.waitingForColorSwitch ||
+        setup.liquidity_engineering?.waiting_for_color_switch ||
+        false,
       entryContext: entrySummary.context || setup.entry_models?.context_type || "unknown",
       availableModels: entrySummary.available || setup.entry_models?.available || [],
       blockedModels: entrySummary.blocked || [],
       pendingModels: entrySummary.pending || []
     };
   });
+}
+
+function getActiveSetupSummary(records) {
+  const activeDecisions = new Set([
+    "monitor",
+    "qualified",
+    "actionable",
+    "actionable_high_priority",
+    "paused"
+  ]);
+  const activeLiquidityStatuses = new Set([
+    "active",
+    "monitoring",
+    "ready_for_color_switch"
+  ]);
+  const activeRecords = records.filter((record) => {
+    return (
+      activeDecisions.has(record.decision) ||
+      activeLiquidityStatuses.has(record.liquidityStatus) ||
+      record.executionStatus === "pending_confirmation" ||
+      record.waitingForColorSwitch
+    );
+  });
+
+  if (!activeRecords.length) {
+    return "0 active";
+  }
+
+  const counts = activeRecords.reduce((acc, record) => {
+    const label =
+      record.decision === "actionable_high_priority"
+        ? "high priority"
+        : record.decision;
+
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+
+  return `${activeRecords.length} active (${Object.entries(counts)
+    .map(([label, count]) => `${label}: ${count}`)
+    .join(", ")})`;
 }
 
 function renderOverview(data) {
@@ -193,11 +310,6 @@ function renderOverview(data) {
     setText("overview-latest-event-meta", "Waiting for event stream.");
   }
 
-  const decisionCounts = reactionRecords.reduce((acc, record) => {
-    acc[record.decision] = (acc[record.decision] || 0) + 1;
-    return acc;
-  }, {});
-
   const summaryEl = document.getElementById("overview-summary");
   if (summaryEl) {
     summaryEl.classList.remove("empty-state");
@@ -207,7 +319,7 @@ function renderOverview(data) {
         "Controls",
         `processing=${controls.processingEnabled !== false}, session=${controls.sessionEligible !== false}`
       ],
-      ["Decisions", Object.keys(decisionCounts).length ? safeJson(decisionCounts) : "none"],
+      ["Active Setups", getActiveSetupSummary(reactionRecords)],
       ["Latest Raw Event", data.latestRawEvent?.receivedAt || "none"]
     ]
       .map(([label, value]) => {
@@ -247,6 +359,163 @@ function renderOverview(data) {
         })
         .join("");
     }
+  }
+}
+
+function renderNotificationControls(settings) {
+  currentNotificationSettings = normalizeNotificationSettings(settings);
+
+  const fields = {
+    "notify-browser": currentNotificationSettings.browserEnabled,
+    "notify-sound": currentNotificationSettings.soundEnabled,
+    "notify-visual-critical": currentNotificationSettings.visualCriticalEnabled,
+    "notify-telegram": currentNotificationSettings.telegramEnabled,
+    "notify-actionable-emergency":
+      currentNotificationSettings.actionableEmergencyMode
+  };
+
+  for (const [id, value] of Object.entries(fields)) {
+    const input = document.getElementById(id);
+    if (input) input.checked = value;
+  }
+
+  const priorityEl = document.getElementById("notify-minimum-priority");
+  if (priorityEl) {
+    priorityEl.value = currentNotificationSettings.minimumPriority;
+  }
+
+  const telegramTokenEl = document.getElementById("notify-telegram-token");
+  const telegramChatIdEl = document.getElementById("notify-telegram-chat-id");
+
+  if (telegramTokenEl) {
+    telegramTokenEl.value = currentNotificationSettings.telegramBotTokenMasked || "";
+    telegramTokenEl.disabled = currentNotificationSettings.telegramEnabled;
+  }
+
+  if (telegramChatIdEl) {
+    telegramChatIdEl.value = currentNotificationSettings.telegramChatIdMasked || "";
+    telegramChatIdEl.disabled = currentNotificationSettings.telegramEnabled;
+  }
+}
+
+async function patchNotificationSettings(patch) {
+  const statusEl = document.getElementById("notification-settings-status");
+  if (statusEl) statusEl.textContent = "Saving...";
+
+  try {
+    const res = await fetch("/notifications/settings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(patch)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Notification settings failed");
+    }
+
+    currentNotificationSettings = normalizeNotificationSettings(
+      data.notificationSettings
+    );
+    renderNotificationControls(currentNotificationSettings);
+    if (statusEl) statusEl.textContent = "Saved.";
+  } catch (err) {
+    console.error("Failed to update notification settings:", err);
+    renderNotificationControls(currentNotificationSettings);
+    if (statusEl) statusEl.textContent = `Failed: ${err.message}`;
+  }
+}
+
+function setupNotificationControls() {
+  const checkboxMap = {
+    "notify-browser": "browserEnabled",
+    "notify-sound": "soundEnabled",
+    "notify-visual-critical": "visualCriticalEnabled",
+    "notify-telegram": "telegramEnabled",
+    "notify-actionable-emergency": "actionableEmergencyMode"
+  };
+
+  for (const [id, settingKey] of Object.entries(checkboxMap)) {
+    const input = document.getElementById(id);
+    if (!input) continue;
+
+    input.addEventListener("change", () => {
+      if (
+        id === "notify-browser" &&
+        input.checked &&
+        "Notification" in window
+      ) {
+        Notification.requestPermission?.();
+      }
+
+      const patch = {
+        [settingKey]: input.checked
+      };
+
+      if (id === "notify-telegram" && input.checked) {
+        const tokenEl = document.getElementById("notify-telegram-token");
+        const chatIdEl = document.getElementById("notify-telegram-chat-id");
+        const tokenValue = tokenEl?.value?.trim() || "";
+        const chatIdValue = chatIdEl?.value?.trim() || "";
+
+        if (tokenValue && !tokenValue.includes("...")) {
+          patch.telegramBotToken = tokenValue;
+        }
+
+        if (chatIdValue && !chatIdValue.includes("...")) {
+          patch.telegramChatId = chatIdValue;
+        }
+      }
+
+      patchNotificationSettings(patch);
+    });
+  }
+
+  const priorityEl = document.getElementById("notify-minimum-priority");
+  if (priorityEl) {
+    priorityEl.addEventListener("change", () => {
+      patchNotificationSettings({
+        minimumPriority: priorityEl.value
+      });
+    });
+  }
+
+  const testButton = document.getElementById("notify-test-btn");
+  if (testButton) {
+    testButton.addEventListener("click", sendTestNotification);
+  }
+}
+
+async function sendTestNotification() {
+  const statusEl = document.getElementById("notification-settings-status");
+  const buttonEl = document.getElementById("notify-test-btn");
+
+  if (statusEl) statusEl.textContent = "Sending test...";
+  if (buttonEl) buttonEl.disabled = true;
+
+  try {
+    const res = await fetch("/notifications/test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Test notification failed");
+    }
+
+    if (statusEl) statusEl.textContent = "Test notification created.";
+  } catch (err) {
+    console.error("Failed to send test notification:", err);
+    if (statusEl) statusEl.textContent = `Failed: ${err.message}`;
+  } finally {
+    if (buttonEl) buttonEl.disabled = false;
   }
 }
 
@@ -407,8 +676,12 @@ function renderDecisionBoard(data) {
 function updateDecisionAlerts(data) {
   const dashboardAlertEl = document.getElementById("dashboard-alert");
   const reactions = data.reactions || {};
+  const settings = normalizeNotificationSettings(data.notificationSettings);
+  let criticalActionableKey = null;
 
   if (!dashboardAlertEl) return;
+
+  currentNotificationSettings = settings;
 
   if (!dashboardAlertEl.textContent.trim()) {
     dashboardAlertEl.textContent = "No new alerts yet.";
@@ -417,8 +690,19 @@ function updateDecisionAlerts(data) {
   for (const [key, reaction] of Object.entries(reactions)) {
     const previousDecision = previousReactions[key] || null;
     const currentDecision = reaction.decision;
+    const priority = getDecisionPriority(currentDecision);
+
+    if (
+      settings.visualCriticalEnabled &&
+      settings.actionableEmergencyMode &&
+      (currentDecision === "actionable" ||
+        currentDecision === "actionable_high_priority")
+    ) {
+      criticalActionableKey = key;
+    }
 
     if (previousDecision === currentDecision) continue;
+    if (!isPriorityAllowed(priority, settings)) continue;
 
     if (currentDecision === "qualified") {
       dashboardAlertEl.textContent = `${key} is qualified and pending confirmation.`;
@@ -437,6 +721,7 @@ function updateDecisionAlerts(data) {
     if (currentDecision === "actionable") {
       dashboardAlertEl.textContent = `${key} is now actionable.`;
       showBrowserNotification("Actionable Setup", `${key} is now actionable.`);
+      playCriticalSound();
     }
 
     if (currentDecision === "actionable_high_priority") {
@@ -445,6 +730,7 @@ function updateDecisionAlerts(data) {
         "High-Priority Setup",
         `${key} is now high-priority actionable.`
       );
+      playCriticalSound();
     }
 
     if (currentDecision === "paused") {
@@ -460,6 +746,11 @@ function updateDecisionAlerts(data) {
     Object.entries(reactions).map(([key, reaction]) => [key, reaction.decision])
   );
   localStorage.setItem("previousReactions", JSON.stringify(previousReactions));
+
+  document.body.classList.toggle("critical-alert-mode", Boolean(criticalActionableKey));
+  if (criticalActionableKey) {
+    dashboardAlertEl.textContent = `ACTIONABLE SETUP: ${criticalActionableKey}`;
+  }
 }
 
 function renderRawHistory(items) {
@@ -523,7 +814,11 @@ async function archiveAndResetActive() {
       throw new Error(data.error || "Archive reset failed");
     }
 
-    statusEl.textContent = `Archived successfully: ${data.archiveFile}`;
+    const preservedCount = data.preservedSetupKeys?.length || 0;
+    statusEl.textContent =
+      preservedCount > 0
+        ? `Archived successfully. Active state reset. Preserved ${preservedCount} live setup${preservedCount === 1 ? "" : "s"}.`
+        : "Archived successfully. Active state reset.";
     previousReactions = {};
     localStorage.setItem("previousReactions", "{}");
     await loadAll();
@@ -540,6 +835,7 @@ async function loadState() {
     const res = await fetch("/state");
     const data = await res.json();
 
+    renderNotificationControls(data.notificationSettings);
     renderOverview(data);
     renderSetupBoard(data);
     renderDecisionBoard(data);
@@ -589,5 +885,6 @@ if (archiveResetBtn) {
 }
 
 setupPageNavigation();
+setupNotificationControls();
 loadAll();
 setInterval(loadAll, 2000);
