@@ -200,6 +200,26 @@ app.post("/notifications/settings", (req, res) => {
   }
 });
 
+app.post("/controls/update", (req, res) => {
+  try {
+    const updatedControls = state.updateControls(req.body || {});
+    state.processNotificationTriggers({ initializeOnly: true });
+
+    res.status(200).json({
+      ok: true,
+      message: "Controls updated successfully",
+      controls: updatedControls
+    });
+  } catch (error) {
+    console.error("[CONTROLS UPDATE ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
 app.post("/notifications/test", (req, res) => {
   try {
     const notification = state.addNotification({

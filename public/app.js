@@ -448,6 +448,13 @@ function renderNotificationControls(settings) {
   }
 }
 
+function renderControlSettings(controls) {
+  const ruleModeEl = document.getElementById("control-rule-mode");
+  if (ruleModeEl) {
+    ruleModeEl.value = controls?.ruleMode === "strict" ? "strict" : "learning";
+  }
+}
+
 async function patchNotificationSettings(patch) {
   const statusEl = document.getElementById("notification-settings-status");
   if (statusEl) statusEl.textContent = "Saving...";
@@ -475,6 +482,34 @@ async function patchNotificationSettings(patch) {
   } catch (err) {
     console.error("Failed to update notification settings:", err);
     renderNotificationControls(currentNotificationSettings);
+    if (statusEl) statusEl.textContent = `Failed: ${err.message}`;
+  }
+}
+
+async function patchControls(patch) {
+  const statusEl = document.getElementById("controls-settings-status");
+  if (statusEl) statusEl.textContent = "Saving...";
+
+  try {
+    const res = await fetch("/controls/update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(patch)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Controls update failed");
+    }
+
+    renderControlSettings(data.controls);
+    if (statusEl) statusEl.textContent = "Saved.";
+    await loadAll();
+  } catch (err) {
+    console.error("Failed to update controls:", err);
     if (statusEl) statusEl.textContent = `Failed: ${err.message}`;
   }
 }
@@ -536,6 +571,17 @@ function setupNotificationControls() {
   const testButton = document.getElementById("notify-test-btn");
   if (testButton) {
     testButton.addEventListener("click", sendTestNotification);
+  }
+}
+
+function setupControlSettings() {
+  const ruleModeEl = document.getElementById("control-rule-mode");
+  if (ruleModeEl) {
+    ruleModeEl.addEventListener("change", () => {
+      patchControls({
+        ruleMode: ruleModeEl.value
+      });
+    });
   }
 }
 
@@ -886,6 +932,7 @@ async function loadState() {
     const res = await fetch("/state");
     const data = await res.json();
 
+    renderControlSettings(data.controls);
     renderNotificationControls(data.notificationSettings);
     renderOverview(data);
     renderSetupBoard(data);
@@ -937,6 +984,7 @@ if (archiveResetBtn) {
 
 setupPageNavigation();
 setupNotificationControls();
+setupControlSettings();
 updateSystemClock();
 loadAll();
 setInterval(updateSystemClock, 1000);

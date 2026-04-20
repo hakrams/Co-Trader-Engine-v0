@@ -734,6 +734,40 @@ function updateNotificationSettings(settingsPatch = {}) {
   return state.notificationSettings;
 }
 
+function updateControls(controlsPatch = {}) {
+  if (
+    !controlsPatch ||
+    typeof controlsPatch !== "object" ||
+    Array.isArray(controlsPatch)
+  ) {
+    return state.controls;
+  }
+
+  state.controls = {
+    processingEnabled:
+      typeof controlsPatch.processingEnabled === "boolean"
+        ? controlsPatch.processingEnabled
+        : state.controls?.processingEnabled !== false,
+    sessionEligible:
+      typeof controlsPatch.sessionEligible === "boolean"
+        ? controlsPatch.sessionEligible
+        : state.controls?.sessionEligible !== false,
+    ruleMode:
+      controlsPatch.ruleMode === "strict"
+        ? "strict"
+        : controlsPatch.ruleMode === "learning"
+          ? "learning"
+          : state.controls?.ruleMode === "strict"
+            ? "strict"
+            : "learning"
+  };
+
+  refreshAllSetupDerivedLayers();
+  saveStateToFile();
+
+  return state.controls;
+}
+
 function markNotificationRead(notificationId) {
   if (typeof notificationId !== "string" || !notificationId.trim()) {
     return {
@@ -1058,6 +1092,8 @@ function evaluateExecutionValidationForSetup(setup) {
       ensureSetupHasLiquidityEngineering(ensureSetupHasScoring(setup))
     )
   );
+  const ruleMode = state.controls?.ruleMode === "strict" ? "strict" : "learning";
+  const strictRules = ruleMode === "strict";
 
   const checks = buildExecutionValidationChecks(safeSetup);
   const result = createDefaultExecutionValidation();
@@ -1120,8 +1156,8 @@ function evaluateExecutionValidationForSetup(setup) {
     !checks.structure_present ||
     !checks.zone_context_present ||
     !checks.eligibility_ok ||
-    !checks.threshold_ok ||
-    !checks.entry_model_available;
+    (strictRules && !checks.threshold_ok) ||
+    (strictRules && !checks.entry_model_available);
 
   if (hasMissingAlignment) {
     result.forced_trade_flags.push("missing_full_setup_alignment");
@@ -1141,6 +1177,16 @@ function evaluateExecutionValidationForSetup(setup) {
 
   if (inExecutionContext) {
     result.status = "pending_confirmation";
+    return result;
+  }
+
+  if (
+    checks.structure_present &&
+    checks.zone_context_present &&
+    checks.eligibility_ok &&
+    !strictRules
+  ) {
+    result.status = "almost_setup";
     return result;
   }
 
@@ -1425,7 +1471,8 @@ const defaultState = {
   latestRawEvent: null,
   controls: {
     processingEnabled: true,
-    sessionEligible: true
+    sessionEligible: true,
+    ruleMode: "learning"
   }
 };
 
@@ -1467,11 +1514,14 @@ function loadStateFromFile() {
         parsed.controls && typeof parsed.controls === "object"
           ? {
               processingEnabled: parsed.controls.processingEnabled !== false,
-              sessionEligible: parsed.controls.sessionEligible !== false
+              sessionEligible: parsed.controls.sessionEligible !== false,
+              ruleMode:
+                parsed.controls.ruleMode === "strict" ? "strict" : "learning"
             }
           : {
               processingEnabled: true,
-              sessionEligible: true
+              sessionEligible: true,
+              ruleMode: "learning"
             }
     };
   } catch (error) {
@@ -2342,6 +2392,7 @@ module.exports = {
   ensureNotificationList,
   addNotification,
   updateNotificationSettings,
+  updateControls,
   markNotificationRead,
   markAllNotificationsRead,
   buildNotificationSnapshots,
