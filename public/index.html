@@ -3,239 +3,237 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Co-Trader Engine V1</title>
+  <title>Co-Trader Engine V2</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
+<body class="view-pc">
   <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand-block">
-        <p class="eyebrow">Co-Trader Engine V1</p>
-        <h1>Control Panel</h1>
-        <p class="subtitle">Multi-page operator shell for runtime visibility.</p>
+    <header class="topbar">
+      <div class="view-switcher">
+        <button id="view-mode-toggle" class="icon-btn" type="button" aria-label="Choose view mode" title="Choose view mode">▣</button>
+        <div id="view-mode-menu" class="view-mode-menu">
+          <button type="button" data-view-mode="mobile" aria-label="Mobile view">▯ Mobile</button>
+          <button type="button" data-view-mode="tablet" aria-label="Tablet view">▭ Tablet</button>
+          <button type="button" data-view-mode="pc" aria-label="PC view">▣ PC</button>
+        </div>
       </div>
 
-      <nav class="page-nav" aria-label="Primary">
-        <button class="nav-btn is-active" type="button" data-page="overview">Overview</button>
-        <button class="nav-btn" type="button" data-page="setup-board">Setup Board</button>
-        <button class="nav-btn" type="button" data-page="decision-board">Decision Board</button>
-        <button class="nav-btn" type="button" data-page="raw-observatory">Raw Observatory</button>
-      </nav>
-    </aside>
+      <div class="brand-block">
+        <p class="eyebrow">Co-Trader Engine V2</p>
+        <h1>Market Story</h1>
+      </div>
 
-    <main class="main-panel">
-      <header class="topbar card card-tight">
-        <div>
-          <p class="section-kicker">Operator View</p>
-          <h2 id="page-title">Overview</h2>
-        </div>
-        <div class="topbar-actions">
-          <button id="archive-reset-btn" class="primary-btn" type="button">Archive &amp; Reset Active</button>
-          <div id="system-clock" class="system-clock">System time: --</div>
-        </div>
-      </header>
+      <div class="topbar-meta">
+        <span id="active-view-label">PC View</span>
+        <span id="system-clock">--</span>
+      </div>
+    </header>
 
-      <p id="archive-reset-status" class="inline-status"></p>
-      <div id="dashboard-alert" class="alert-banner">No new alerts yet.</div>
+    <div class="layout-grid">
+      <aside class="sidebar">
+        <nav class="page-nav" aria-label="Market story pages">
+          <button class="nav-btn is-active" type="button" data-page="dashboard">Dashboard</button>
+          <button class="nav-btn" type="button" data-page="open-clues">Open Clues</button>
+          <button class="nav-btn" type="button" data-page="tfc">TFC / Family Map</button>
+          <button class="nav-btn" type="button" data-page="history-clues">History Clues</button>
+          <button class="nav-btn" type="button" data-page="teaching">Teaching</button>
+          <button class="nav-btn" type="button" data-page="raw-alerts">Raw Alerts</button>
+          <button class="nav-btn" type="button" data-page="settings">Settings</button>
+        </nav>
 
-      <section class="page is-active" data-page="overview">
-        <div class="overview-grid">
-          <section class="card metric-card">
-            <p class="metric-label">Connection</p>
-            <h3 id="status">Server connected. Dashboard page loaded.</h3>
-            <p class="metric-subtext">Frontend heartbeat and backend fetch status.</p>
-          </section>
-
-          <section class="card metric-card">
-            <p class="metric-label">Latest Event</p>
-            <h3 id="overview-latest-event">No events received yet.</h3>
-            <p id="overview-latest-event-meta" class="metric-subtext">Waiting for event stream.</p>
-          </section>
-
-          <section class="card metric-card">
-            <p class="metric-label">Setup Count</p>
-            <h3 id="overview-setup-count">0</h3>
-            <p class="metric-subtext">Tracked directional setup stories.</p>
-          </section>
-
-          <section class="card metric-card">
-            <p class="metric-label">Raw Events</p>
-            <h3 id="overview-raw-count">0</h3>
-            <p class="metric-subtext">Captured webhook payloads in observatory.</p>
-          </section>
-        </div>
-
-        <div class="two-column-layout">
-          <section class="card">
-            <div class="section-header">
-              <div>
-                <p class="section-kicker">Engine Summary</p>
-                <h3>Active Setup Snapshot</h3>
-              </div>
-            </div>
-            <div id="overview-summary" class="stack-list empty-state">No engine summary yet.</div>
-          </section>
-
-          <section class="card">
-            <div class="section-header">
-              <div>
-                <p class="section-kicker">Recent Activity</p>
-                <h3>Latest History</h3>
-              </div>
-            </div>
-            <div id="overview-history" class="stack-list empty-state">No event history yet.</div>
-          </section>
-        </div>
-
-        <section class="card notification-controls-card">
-          <div class="section-header">
-            <div>
-              <p class="section-kicker">Alert Controls</p>
-              <h3>Notifications</h3>
-            </div>
-            <p id="notification-settings-status" class="inline-status compact-status"></p>
-          </div>
-
-          <div class="settings-grid">
-            <label class="toggle-row">
-              <input id="notify-browser" type="checkbox" />
-              <span>Browser</span>
-            </label>
-            <label class="toggle-row">
-              <input id="notify-sound" type="checkbox" />
-              <span>Sound</span>
-            </label>
-            <label class="toggle-row">
-              <input id="notify-visual-critical" type="checkbox" />
-              <span>Critical visual</span>
-            </label>
-            <label class="toggle-row">
-              <input id="notify-telegram" type="checkbox" />
-              <span>Telegram</span>
-            </label>
-            <label class="input-row">
-              <span>Bot token</span>
-              <input
-                id="notify-telegram-token"
-                type="password"
-                autocomplete="off"
-                placeholder="Paste token"
-              />
-            </label>
-            <label class="input-row">
-              <span>Chat ID</span>
-              <input
-                id="notify-telegram-chat-id"
-                type="text"
-                autocomplete="off"
-                placeholder="Paste chat ID"
-              />
-            </label>
-            <label class="toggle-row">
-              <input id="notify-actionable-emergency" type="checkbox" />
-              <span>Actionable emergency</span>
-            </label>
-            <label class="select-row">
-              <span>Minimum priority</span>
-              <select id="notify-minimum-priority">
-                <option value="info">Info</option>
-                <option value="watch">Watch</option>
-                <option value="important">Important</option>
-                <option value="critical">Critical</option>
-              </select>
-            </label>
-            <button id="notify-test-btn" class="secondary-btn" type="button">
-              Send test
-            </button>
-          </div>
+        <section class="side-status panel">
+          <p class="section-kicker">Current Page</p>
+          <h2 id="page-title">Dashboard</h2>
+          <p id="connection-status">Waiting for backend state.</p>
         </section>
+      </aside>
 
-        <section class="card notification-controls-card">
+      <main class="main-panel">
+        <div id="story-alert" class="alert-banner">Waiting for market clues.</div>
+
+        <section class="page is-active" data-page="dashboard">
           <div class="section-header">
             <div>
-              <p class="section-kicker">Engine Controls</p>
-              <h3>Rules</h3>
+              <p class="section-kicker">Running Stories</p>
+              <h2>Dashboard</h2>
             </div>
-            <p id="controls-settings-status" class="inline-status compact-status"></p>
-          </div>
-
-          <div class="settings-grid">
-            <label class="select-row">
-              <span>Rule mode</span>
-              <select id="control-rule-mode">
-                <option value="learning">Learning</option>
-                <option value="strict">Strict</option>
+            <label class="select-control">
+              <span>Sort</span>
+              <select id="story-sort">
+                <option value="attention">Attention</option>
+                <option value="latest">Latest change</option>
+                <option value="chapter">Chapter</option>
+                <option value="symbol">Symbol / TF</option>
               </select>
             </label>
           </div>
+
+          <div class="metric-grid">
+            <article class="metric panel">
+              <span>Stories</span>
+              <strong id="metric-stories">0</strong>
+            </article>
+            <article class="metric panel">
+              <span>History Clues</span>
+              <strong id="metric-history-clues">0</strong>
+            </article>
+            <article class="metric panel">
+              <span>Raw Alerts</span>
+              <strong id="metric-raw-alerts">0</strong>
+            </article>
+            <article class="metric panel">
+              <span>Open Clues</span>
+              <strong id="metric-open-clues">0</strong>
+            </article>
+          </div>
+
+          <div id="story-grid" class="story-grid empty-state">No running market stories yet.</div>
         </section>
-      </section>
 
-      <section class="page" data-page="setup-board">
-        <div class="card">
+        <section class="page" data-page="open-clues">
           <div class="section-header">
             <div>
-              <p class="section-kicker">Operational View</p>
-              <h3>Setups Grouped by Final Decision</h3>
+              <p class="section-kicker">Clue Holding Area</p>
+              <h2>Open Clues</h2>
             </div>
           </div>
-          <div id="setup-board-groups" class="decision-groups empty-state">No setups tracked yet.</div>
-        </div>
-      </section>
 
-      <section class="page" data-page="decision-board">
-        <div class="card">
+          <div id="open-clue-grid" class="story-grid empty-state">No open clues right now.</div>
+        </section>
+
+        <section class="page" data-page="tfc">
           <div class="section-header">
             <div>
-              <p class="section-kicker">Decision Visibility</p>
-              <h3>Decision Board</h3>
+              <p class="section-kicker">Time Frame Confluence</p>
+              <h2>Family Map</h2>
+            </div>
+            <div class="segmented-control" aria-label="TFC view mode">
+              <button class="is-active" type="button" data-tfc-view="cards" aria-label="Grouped family cards">▦</button>
+              <button type="button" data-tfc-view="tree" aria-label="Family tree">┬</button>
             </div>
           </div>
-          <div id="decision-board-groups" class="decision-groups empty-state">No decisions available yet.</div>
-        </div>
-      </section>
+          <section class="panel tfc-workspace">
+            <div id="family-map" class="family-map empty-state">No family map yet.</div>
+          </section>
+        </section>
 
-      <section class="page" data-page="raw-observatory">
-        <div class="card">
+        <section class="page" data-page="history-clues">
           <div class="section-header">
             <div>
-              <p class="section-kicker">Debug Observatory</p>
-              <h3>Raw Webhook Intake</h3>
+              <p class="section-kicker">Manual Backfill</p>
+              <h2>History Clues</h2>
             </div>
+            <p id="history-form-status" class="inline-status"></p>
           </div>
 
-          <div class="overview-grid compact-grid">
-            <div class="metric-card metric-card-inline">
-              <p class="metric-label">Raw Event Count</p>
-              <h3 id="raw-count">0</h3>
-            </div>
-            <div class="metric-card metric-card-inline">
-              <p class="metric-label">Latest Raw Receipt</p>
-              <h3 id="raw-latest-meta">No raw payload yet.</h3>
-            </div>
-          </div>
+          <div class="split-layout history-layout">
+            <form id="history-clue-form" class="panel form-panel">
+              <div class="form-grid">
+                <label><span>Symbol</span><input name="symbol" placeholder="EURUSD" required /></label>
+                <label><span>Timeframe</span><input name="timeframe" placeholder="15m" required /></label>
+                <label><span>Clue Type</span>
+                  <select name="clueType" required>
+                    <option value="ob_created">OB created</option>
+                    <option value="choch_formed">CHoCH formed</option>
+                    <option value="bos_formed">BOS formed</option>
+                    <option value="ob_tap">OB tap</option>
+                    <option value="manual_note">Manual note</option>
+                  </select>
+                </label>
+                <label><span>Direction</span>
+                  <select name="direction">
+                    <option value="unknown">Unknown</option>
+                    <option value="bullish">Bullish</option>
+                    <option value="bearish">Bearish</option>
+                  </select>
+                </label>
+                <div class="detected-role-note">
+                  <span>Detected Role</span>
+                  <strong>Auto</strong>
+                  <p>15M becomes parent. 3M is detected as close child, extended child, or unattached from OHLC against saved 15M parent OBs.</p>
+                </div>
+                <div class="detected-role-note">
+                  <span>Chapter Identity</span>
+                  <strong>Detected Later</strong>
+                  <p>B/C/L comes from clue sequence: BOS, CHoCH, or repeated same-OB taps. A single manual OB clue stays open.</p>
+                </div>
+                <label><span>Exact OB Time</span><input name="obTime" type="datetime-local" required /></label>
+                <label><span>Open</span><input name="open" type="number" step="0.00001" placeholder="0.00000" /></label>
+                <label><span>High</span><input name="high" type="number" step="0.00001" placeholder="0.00000" /></label>
+                <label><span>Low</span><input name="low" type="number" step="0.00001" placeholder="0.00000" /></label>
+                <label><span>Close</span><input name="close" type="number" step="0.00001" placeholder="0.00000" /></label>
+              </div>
+              <label class="full-label"><span>History Note</span><textarea name="note" rows="5" placeholder="Add the clue in your own words."></textarea></label>
+              <button class="primary-btn" type="submit">Add History Clue</button>
+            </form>
 
-          <div class="two-column-layout">
+            <section class="panel">
+              <h3>Saved Clues</h3>
+              <div id="history-clue-list" class="stack-list empty-state">No history clues saved yet.</div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" data-page="teaching">
+          <div class="section-header">
             <div>
-              <h4>Latest Raw Payload</h4>
+              <p class="section-kicker">Natural Teaching</p>
+              <h2>Teaching</h2>
+            </div>
+            <p id="teaching-status" class="inline-status"></p>
+          </div>
+
+          <div class="split-layout">
+            <form id="teaching-form" class="panel form-panel">
+              <label><span>Attach To</span><input name="target" placeholder="EURUSD 3M Chapter L" /></label>
+              <label><span>Free Explanation</span><textarea name="explanation" rows="9" placeholder="Explain naturally. Corrections, analogies, and rough wording are welcome."></textarea></label>
+              <button class="primary-btn" type="submit">Save Teaching Note</button>
+            </form>
+            <section class="panel">
+              <h3>Teaching Notes</h3>
+              <div id="teaching-note-list" class="stack-list empty-state">No teaching notes saved in this browser yet.</div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" data-page="raw-alerts">
+          <div class="section-header">
+            <div>
+              <p class="section-kicker">Teaching Feed</p>
+              <h2>Raw Alerts</h2>
+            </div>
+          </div>
+          <div class="split-layout">
+            <section class="panel">
+              <h3>Latest Raw Payload</h3>
               <pre id="raw-latest" class="json-box">Waiting for webhook...</pre>
-            </div>
-            <div>
-              <h4>Observed Field Summary</h4>
-              <pre id="raw-summary" class="json-box">No fields observed yet.</pre>
-            </div>
+            </section>
+            <section class="panel">
+              <h3>Raw Alert History</h3>
+              <div id="raw-history" class="stack-list empty-state">No raw alerts yet.</div>
+            </section>
           </div>
+        </section>
 
-          <div class="section-header section-header-spaced">
+        <section class="page" data-page="settings">
+          <div class="section-header">
             <div>
-              <p class="section-kicker">Newest First</p>
-              <h3>Raw Payload History</h3>
+              <p class="section-kicker">Operator Preferences</p>
+              <h2>Settings</h2>
             </div>
           </div>
-          <div id="raw-history" class="history-list"></div>
-        </div>
-      </section>
-    </main>
+          <section class="panel settings-panel">
+            <h3>View Mode</h3>
+            <p>Use the icon button in the top-left to manually choose Mobile, Tablet, or PC view.</p>
+            <div class="view-mode-buttons">
+              <button type="button" data-view-mode="mobile">▯ Mobile</button>
+              <button type="button" data-view-mode="tablet">▭ Tablet</button>
+              <button type="button" data-view-mode="pc">▣ PC</button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
   </div>
 
   <script src="/app.js"></script>

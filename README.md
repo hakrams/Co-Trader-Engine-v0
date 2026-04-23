@@ -1,12 +1,12 @@
-# Co-Trader Engine V1
+# Co-Trader Engine V2
 
 ## Overview
 
-Co-Trader Engine V1 is a webhook-driven trading event engine that receives TradingView alerts, normalizes market-structure events, tracks setup progression per symbol and timeframe, and exposes a live browser dashboard for observability.
+Co-Trader Engine V2 is the active working folder for the next direction of the trading engine.
 
-This version is the next practical step after the original proof-of-concept. It keeps the same event-driven architecture, but adds a more structured parsing pipeline, raw payload visibility, and file-backed state persistence so the engine can survive restarts more reliably than the earlier in-memory-only flow.
+V1 has been archived separately, so this folder can be changed freely. The current codebase still contains the V1 webhook intake, parser, state persistence, decision logic, and dashboard foundation until the V2 architecture replaces or reshapes those pieces.
 
-## What V1 Currently Does
+## Current Baseline
 
 - accepts TradingView-style webhook payloads through `POST /webhook`
 - captures every raw payload first, even if parsing fails
@@ -34,7 +34,7 @@ TradingView
 ## Project Structure
 
 ```text
-co-trader-engine-v1/
+co-trader-engine-v2/
 |-- data/
 |   |-- engine-state.json
 |   `-- .gitkeep
@@ -179,7 +179,7 @@ Open the dashboard in a browser after the server starts.
 
 ## Persistence
 
-V1 stores engine state in:
+V2 currently stores engine state in:
 
 ```text
 data/engine-state.json
@@ -203,13 +203,12 @@ That state currently includes:
 - dashboard polling is basic
 - package metadata still needs cleanup in some places outside this README
 
-## V1 Intent
+## V2 Intent
 
-V1 should be treated as the practical stabilization layer after the earlier proof-of-concept:
+V2 is the active redesign workspace. The archived V1 folder is the safety copy; this folder is where the engine, dashboard, and trading logic can now be modified directly.
 
-- more observability
-- better normalization
-- restart-safe file persistence
-- clearer separation between raw intake and parsed engine logic
+Initial direction:
 
-It is still not a finished production system, but it is a stronger working foundation for the next layer of engine growth.
+- preserve anything useful from the existing webhook/dashboard foundation
+- remove or reshape V1 assumptions when they get in the way
+- make the engine model match the new trading direction before adding more features

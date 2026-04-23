@@ -1,7 +1,7 @@
 {
-  "name": "co-trader-engine-v0",
+  "name": "co-trader-engine-v2",
   "version": "1.0.0",
-  "description": "Minimal runnable shell for Co-Trader Engine V0",
+  "description": "Co-Trader Engine V2 workspace",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
