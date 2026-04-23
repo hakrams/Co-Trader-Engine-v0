@@ -82,12 +82,10 @@ function detectHistoryClueRole(input, existingItems) {
   const parentCandidates = existingItems
     .filter((item) => {
       const sameSymbol = String(item.symbol || "").trim().toUpperCase() === symbol;
-      const sameDirection = direction === "unknown" || String(item.direction || "unknown") === direction;
       const beforeClue = !inputTime || getClueTimeMs(item) <= inputTime;
 
       return (
         sameSymbol &&
-        sameDirection &&
         beforeClue &&
         normalizeTimeframe(item.timeframe) === "15m" &&
         item.role === "parent" &&
@@ -109,18 +107,33 @@ function detectHistoryClueRole(input, existingItems) {
   });
 
   if (containingParent) {
+    const parentDirection = String(containingParent.direction || "unknown").trim();
+    const opposingDirection =
+      direction !== "unknown" &&
+      parentDirection !== "unknown" &&
+      direction !== parentDirection;
+
     return {
-      role: "close_child",
-      reason: "3M clue range is contained inside a saved same-direction 15M parent OB range.",
+      role: opposingDirection ? "conflict_child" : "close_child",
+      reason: opposingDirection
+        ? "3M clue is attached inside the parent OB range, but its direction opposes the saved 15M parent so it is tracked as conflict_child, not confluence."
+        : "3M clue range is contained inside a saved same-direction 15M parent OB range.",
       parentClueId: containingParent.id
     };
   }
 
   const nearestParent = parentCandidates[0];
+  const nearestParentDirection = String(nearestParent.direction || "unknown").trim();
+  const opposingDirection =
+    direction !== "unknown" &&
+    nearestParentDirection !== "unknown" &&
+    direction !== nearestParentDirection;
 
   return {
-    role: "extended_child",
-    reason: "3M clue is outside the parent OB range, but it still belongs to the nearest same-direction 15M parent family.",
+    role: opposingDirection ? "conflict_child" : "extended_child",
+    reason: opposingDirection
+      ? "3M clue still belongs under the nearest 15M parent by attachment, but its direction opposes that parent so it is tracked as conflict_child."
+      : "3M clue is outside the parent OB range, but it still belongs to the nearest same-direction 15M parent family.",
     parentClueId: nearestParent.id
   };
 }
@@ -395,18 +408,43 @@ function findBestFamilyMatch(families, event) {
 
 function deriveFamilyChapterCode(family) {
   const latestEvent = family.events[family.events.length - 1] || null;
+  const tapCount = family.events.filter((event) => event?.event_type === "ob_tap")
+    .length;
 
   if (latestEvent?.structure_type === "choch") return "C";
   if (latestEvent?.structure_type === "bos") return "B";
-  if (latestEvent?.event_type === "ob_tap" && family.tapCount >= 2) return "L?";
+  if (
+    family.timeframe !== "15m" &&
+    latestEvent?.event_type === "ob_tap" &&
+    tapCount >= 2
+  ) {
+    return "L";
+  }
   return "?";
 }
 
 function deriveFamilyChapterName(code) {
   if (code === "C") return "CHoCH reversal";
   if (code === "B") return "BOS continuation";
-  if (code === "L?") return "Liquidity engineering watch";
+  if (code === "L" || code === "L?") return "Liquidity engineering";
   return "Open market clue";
+}
+
+function hasRepeatedChildrenLiquidityContext(members) {
+  const closeChildren = members.filter((member) => {
+    return (
+      member &&
+      member.timeframe === "3m" &&
+      member.role === "close_child" &&
+      (
+        member.latestClue === "bearish_ob" ||
+        member.latestClue === "bullish_ob" ||
+        member.state === "order block created"
+      )
+    );
+  });
+
+  return closeChildren.length >= 2;
 }
 
 function buildLiveFamiliesFromHistory(history) {
@@ -545,10 +583,21 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
     const parent = family.timeframe === "3m" ? findParentFamilyForChild(parents.map((item) => item.parent), family) : null;
 
     if (parent) {
+      const parentDirection = String(parent.direction || "unknown").trim();
+      const childDirection = String(family.direction || "unknown").trim();
+      const directionConflict =
+        parentDirection !== "unknown" &&
+        childDirection !== "unknown" &&
+        parentDirection !== childDirection;
+
       parentById.get(parent.id)?.members.push({
         ...family,
         parentClueId: parent.id,
-        role: rangesCloseEnough(parent.ohlc, family.ohlc) ? "close_child" : "extended_child"
+        role: directionConflict
+          ? "conflict_child"
+          : rangesCloseEnough(parent.ohlc, family.ohlc)
+            ? "close_child"
+            : "extended_child"
       });
     } else {
       looseMembers.push({
@@ -570,14 +619,26 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
     const extendedCount = family.members.filter(
       (member) => member.role === "extended_child"
     ).length;
+    const conflictCount = family.members.filter(
+      (member) => member.role === "conflict_child"
+    ).length;
     const openCount = family.members.filter((member) =>
       String(member.chapterCode || "?").includes("?")
     ).length;
+    const repeatedChildrenLiquidity = hasRepeatedChildrenLiquidityContext(
+      family.members
+    );
+    const familyChapter =
+      family.parent.chapterCode && family.parent.chapterCode !== "?"
+        ? family.parent.chapterCode
+        : repeatedChildrenLiquidity
+          ? "L"
+          : "?";
 
     return {
       ...family,
-      familyChapter: family.parent.chapterCode || "?",
-      familyChapterName: family.parent.chapterName || "Open market clue",
+      familyChapter,
+      familyChapterName: deriveFamilyChapterName(familyChapter),
       latestClue:
         latestMember.latestClue || family.parent.latestClue || "family update",
       state: latestMember.state || family.parent.state || "waiting",
@@ -587,6 +648,7 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
       totalCount: family.members.length + 1,
       closeCount,
       extendedCount,
+      conflictCount,
       openCount
     };
   });
@@ -616,6 +678,7 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
       totalCount: looseMembers.length,
       closeCount: 0,
       extendedCount: 0,
+      conflictCount: 0,
       openCount: looseMembers.filter((member) => String(member.chapterCode || "?").includes("?")).length
     });
   }

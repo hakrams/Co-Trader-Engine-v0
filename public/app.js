@@ -270,6 +270,7 @@ function getTfcViewMode() {
 function roleLabel(role) {
   if (role === "close_child") return "close child";
   if (role === "extended_child") return "extended child";
+  if (role === "conflict_child") return "conflict child";
   if (role === "orphan") return "unattached";
   return humanize(role);
 }
@@ -286,7 +287,7 @@ function deriveFamilyChapter(parent, members) {
 
 function buildFamilies(stories) {
   const parents = stories.filter((story) => story.role === "parent");
-  const children = stories.filter((story) => ["close_child", "extended_child", "child"].includes(story.role));
+  const children = stories.filter((story) => ["close_child", "extended_child", "conflict_child", "child"].includes(story.role));
   const unattached = stories.filter((story) => story.role === "orphan" || story.role === "unknown");
   const families = parents.map((parent) => ({ id: parent.key, parent, members: [], loose: false }));
   const familyByParentId = new Map(families.map((family) => [family.id, family]));
@@ -314,6 +315,7 @@ function buildFamilies(stories) {
     familyChapter: family.loose ? "?" : deriveFamilyChapter(family.parent, family.members),
     closeCount: family.members.filter((member) => member.role === "close_child" || member.role === "child").length,
     extendedCount: family.members.filter((member) => member.role === "extended_child").length,
+    conflictCount: family.members.filter((member) => member.role === "conflict_child").length,
     openCount: family.members.filter((member) => member.chapterCode.includes("?")).length
   })).sort((a, b) => getChapterRank(b.familyChapter) - getChapterRank(a.familyChapter) || b.members.length - a.members.length);
 }
@@ -341,6 +343,7 @@ function renderFamilyCard(family, isCollapsed) {
     "<p>" + escapeHtml(family.state) + " · " + escapeHtml(family.familyChapterName) + "</p></div>" +
     "<div class=\"family-stats\" aria-label=\"Family counts\"><span>" + escapeHtml(String(family.memberCount)) + " " + escapeHtml(childLabel) + "</span>" +
     "<span>" + escapeHtml(String(family.closeCount)) + " close</span><span>" + escapeHtml(String(family.extendedCount)) + " extended</span>" +
+    "<span>" + escapeHtml(String(family.conflictCount || 0)) + " conflict</span>" +
     "<span>" + escapeHtml(String(family.openCount)) + " open</span></div></summary>" +
     "<div class=\"family-members\">" + parentHtml + membersHtml + "</div></details></article>";
 }
@@ -349,13 +352,15 @@ function renderFamilyTree(family) {
   const parent = family.parent;
   const closeMembers = family.members.filter((member) => ["close_child", "child"].includes(member.role));
   const extendedMembers = family.members.filter((member) => member.role === "extended_child");
-  const otherMembers = family.members.filter((member) => !["close_child", "child", "extended_child"].includes(member.role));
+  const conflictMembers = family.members.filter((member) => member.role === "conflict_child");
+  const otherMembers = family.members.filter((member) => !["close_child", "child", "extended_child", "conflict_child"].includes(member.role));
 
   const branches = family.loose
     ? [{ key: "open", label: "Open Clues", role: "orphan", members: family.members }]
     : [
         { key: "close", label: "Close Children", role: "close_child", members: closeMembers },
         { key: "extended", label: "Extended Children", role: "extended_child", members: extendedMembers },
+        { key: "conflict", label: "Conflict Children", role: "conflict_child", members: conflictMembers },
         { key: "other", label: "Other Clues", role: "orphan", members: otherMembers }
       ].filter((branch) => branch.members.length > 0);
 
