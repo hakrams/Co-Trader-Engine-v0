@@ -127,8 +127,6 @@ function buildDashboardStories() {
 
   return families.map((family) => {
     const parent = family.parent;
-    const familyEvents = [parent, ...family.members].filter(Boolean);
-    const latestEvent = familyEvents.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0] || parent;
 
     return {
       id: `family:${family.id}`,
@@ -136,16 +134,16 @@ function buildDashboardStories() {
       key: `family:${family.id}`,
       symbol: parent.symbol,
       timeframe: parent.timeframe,
-      direction: latestEvent.direction || parent.direction,
+      direction: family.direction || parent.direction,
       chapterCode: family.familyChapter,
-      chapterName: `Family head (${family.closeCount} close, ${family.extendedCount} extended)`,
+      chapterName: `${family.familyChapterName} (${family.memberCount} child${family.memberCount === 1 ? "" : "ren"})`,
       role: "parent",
-      state: parent.state,
-      latestClue: latestEvent.latestClue || parent.latestClue || "family update",
+      state: family.state || parent.state,
+      latestClue: family.latestClue || parent.latestClue || "family update",
       anchorTime: parent.anchorTime,
       ohlc: parent.ohlc || null,
-      note: `${family.members.length} children attached in this family.`,
-      updatedAt: latestEvent.updatedAt || parent.updatedAt,
+      note: `${family.memberCount} child${family.memberCount === 1 ? "" : "ren"} attached under this family head.`,
+      updatedAt: family.updatedAt || parent.updatedAt,
       attention: getChapterRank(family.familyChapter)
     };
   });
@@ -277,7 +275,7 @@ function roleLabel(role) {
 }
 
 function getChapterRank(code) {
-  return { LB: 6, LC: 6, L: 5, C: 4, B: 4, "?": 1 }[code] || 1;
+  return { LB: 6, LC: 6, L: 5, "L?": 3, C: 4, B: 4, "?": 1 }[code] || 1;
 }
 
 function deriveFamilyChapter(parent, members) {
@@ -320,9 +318,11 @@ function buildFamilies(stories) {
   })).sort((a, b) => getChapterRank(b.familyChapter) - getChapterRank(a.familyChapter) || b.members.length - a.members.length);
 }
 
-function renderFamilyMember(member) {
+function renderFamilyMember(member, options = {}) {
+  const chapterCode = options.chapterCode || member.chapterCode || "?";
+
   return "<article class=\"family-member role-" + escapeHtml(roleClass(member.role)) + "\">" +
-    "<div><strong>" + escapeHtml(member.symbol) + " " + escapeHtml(member.timeframe) + " · Chapter " + escapeHtml(member.chapterCode) + "</strong>" +
+    "<div><strong>" + escapeHtml(member.symbol) + " " + escapeHtml(member.timeframe) + " · Chapter " + escapeHtml(chapterCode) + "</strong>" +
     "<p>" + escapeHtml(roleLabel(member.role)) + " · " + escapeHtml(member.state) + " · " + escapeHtml(humanize(member.direction)) + "</p></div>" +
     "<span class=\"role-pill\">" + escapeHtml(formatTimestamp(member.anchorTime)) + "</span></article>";
 }
@@ -331,14 +331,15 @@ function renderFamilyCard(family, isCollapsed) {
   const parent = family.parent;
   const familySizeClass = family.members.length >= 4 ? "family-large" : family.members.length >= 2 ? "family-medium" : "family-small";
   const membersHtml = family.members.length ? family.members.map(renderFamilyMember).join("") : "<p class=\"empty-state\">No children in this family yet.</p>";
-  const parentHtml = family.loose ? "" : renderFamilyMember(parent);
+  const parentHtml = family.loose ? "" : renderFamilyMember(parent, { chapterCode: family.familyChapter });
   const openAttr = isCollapsed ? "" : " open";
+  const childLabel = family.memberCount === 1 ? "child" : "children";
 
   return "<article class=\"family-card " + familySizeClass + (family.loose ? " family-loose" : "") + "\"><details data-family-id=\"" + escapeHtml(family.id) + "\"" + openAttr + "><summary>" +
     "<div><p class=\"chapter-code\">Family Chapter " + escapeHtml(family.familyChapter) + "</p>" +
     "<h3>" + escapeHtml(parent.symbol) + " " + escapeHtml(parent.timeframe) + " " + (family.loose ? "Holding Area" : "Family") + "</h3>" +
-    "<p>" + escapeHtml(parent.state) + " · " + escapeHtml(parent.chapterName) + "</p></div>" +
-    "<div class=\"family-stats\" aria-label=\"Family counts\"><span>" + escapeHtml(String(family.members.length)) + " clues</span>" +
+    "<p>" + escapeHtml(family.state) + " · " + escapeHtml(family.familyChapterName) + "</p></div>" +
+    "<div class=\"family-stats\" aria-label=\"Family counts\"><span>" + escapeHtml(String(family.memberCount)) + " " + escapeHtml(childLabel) + "</span>" +
     "<span>" + escapeHtml(String(family.closeCount)) + " close</span><span>" + escapeHtml(String(family.extendedCount)) + " extended</span>" +
     "<span>" + escapeHtml(String(family.openCount)) + " open</span></div></summary>" +
     "<div class=\"family-members\">" + parentHtml + membersHtml + "</div></details></article>";
@@ -376,7 +377,7 @@ function renderFamilyTree(family) {
   return "<article class=\"tree-family top-fork" + (family.loose ? " family-loose" : "") + "\">" +
     "<div class=\"tree-root-wrap\"><div class=\"tree-node tree-root\"><span class=\"node-chapter\">" + escapeHtml(family.familyChapter) + "</span>" +
     "<div><strong>" + escapeHtml(parent.symbol) + " " + escapeHtml(parent.timeframe) + " " + (family.loose ? "Holding Area" : "Parent") + "</strong>" +
-    "<p>" + escapeHtml(parent.state) + " · " + escapeHtml(parent.chapterName) + "</p></div></div></div>" +
+    "<p>" + escapeHtml(family.state) + " · " + escapeHtml(family.familyChapterName) + "</p></div></div></div>" +
     "<div class=\"tree-branches\">" + branchesHtml + "</div></article>";
 }
 
@@ -508,8 +509,7 @@ function renderRawAlerts() {
 }
 
 function renderAlertBanner() {
-  const latest = appState.raw.latest?.payload;
-  const latestEvent = latest?.event || appState.engine?.latestEvent?.normalized?.event_raw;
+  const latestEvent = appState.engine?.latestEvent?.normalized?.event_raw;
 
   if (latestEvent) {
     setText("story-alert", `Latest clue: ${latestEvent}`);

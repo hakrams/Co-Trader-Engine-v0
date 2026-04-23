@@ -394,9 +394,11 @@ function findBestFamilyMatch(families, event) {
 }
 
 function deriveFamilyChapterCode(family) {
-  if (family.structureTypes.has("choch")) return "C";
-  if (family.structureTypes.has("bos")) return "B";
-  if (family.tapCount >= 2) return "L?";
+  const latestEvent = family.events[family.events.length - 1] || null;
+
+  if (latestEvent?.structure_type === "choch") return "C";
+  if (latestEvent?.structure_type === "bos") return "B";
+  if (latestEvent?.event_type === "ob_tap" && family.tapCount >= 2) return "L?";
   return "?";
 }
 
@@ -556,13 +558,38 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
     }
   }
 
-  const mapped = parents.map((family) => ({
-    ...family,
-    familyChapter: deriveFamilyChapter(family.parent, family.members),
-    closeCount: family.members.filter((member) => member.role === "close_child" || member.role === "child").length,
-    extendedCount: family.members.filter((member) => member.role === "extended_child").length,
-    openCount: family.members.filter((member) => String(member.chapterCode || "?").includes("?")).length
-  }));
+  const mapped = parents.map((family) => {
+    const familyEvents = [family.parent, ...family.members].filter(Boolean);
+    const latestMember =
+      familyEvents.sort(
+        (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
+      )[0] || family.parent;
+    const closeCount = family.members.filter(
+      (member) => member.role === "close_child" || member.role === "child"
+    ).length;
+    const extendedCount = family.members.filter(
+      (member) => member.role === "extended_child"
+    ).length;
+    const openCount = family.members.filter((member) =>
+      String(member.chapterCode || "?").includes("?")
+    ).length;
+
+    return {
+      ...family,
+      familyChapter: family.parent.chapterCode || "?",
+      familyChapterName: family.parent.chapterName || "Open market clue",
+      latestClue:
+        latestMember.latestClue || family.parent.latestClue || "family update",
+      state: latestMember.state || family.parent.state || "waiting",
+      direction: latestMember.direction || family.parent.direction || "unknown",
+      updatedAt: latestMember.updatedAt || family.parent.updatedAt || null,
+      memberCount: family.members.length,
+      totalCount: family.members.length + 1,
+      closeCount,
+      extendedCount,
+      openCount
+    };
+  });
 
   if (looseMembers.length) {
     mapped.push({
@@ -579,6 +606,14 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
       members: looseMembers,
       loose: true,
       familyChapter: "?",
+      familyChapterName: "Waiting for family",
+      latestClue:
+        looseMembers[0]?.latestClue || looseMembers[0]?.state || "open clue",
+      state: "open clues",
+      direction: looseMembers[0]?.direction || "unknown",
+      updatedAt: looseMembers[0]?.updatedAt || null,
+      memberCount: looseMembers.length,
+      totalCount: looseMembers.length,
       closeCount: 0,
       extendedCount: 0,
       openCount: looseMembers.filter((member) => String(member.chapterCode || "?").includes("?")).length
