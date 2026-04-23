@@ -736,6 +736,50 @@ function setupHistoryForm() {
   });
 }
 
+function setupArchiveResetControl() {
+  const button = document.getElementById("archive-reset-btn");
+  const status = document.getElementById("archive-reset-status");
+  if (!button) return;
+
+  button.addEventListener("click", async () => {
+    const pin = window.prompt("Enter archive reset PIN to continue:");
+
+    if (pin === null) {
+      if (status) status.textContent = "Cancelled.";
+      return;
+    }
+
+    if (status) status.textContent = "Archiving and resetting active state...";
+    button.disabled = true;
+
+    try {
+      const res = await fetch("/archive-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pin })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Archive reset failed");
+      }
+
+      if (status) {
+        const preservedCount = Array.isArray(data.preservedSetupKeys) ? data.preservedSetupKeys.length : 0;
+        status.textContent = "Archived and reset. " + preservedCount + " protected setup(s) preserved.";
+      }
+
+      await loadAll();
+    } catch (error) {
+      console.error("Archive reset failed:", error);
+      if (status) status.textContent = "Failed: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function setupTeachingForm() {
   const form = document.getElementById("teaching-form");
   const status = document.getElementById("teaching-status");
@@ -771,6 +815,7 @@ setupPageNavigation();
 setupViewModeControls();
 setupTfcViewControls();
 setupHistoryForm();
+setupArchiveResetControl();
 setupTeachingForm();
 updateClock();
 loadAll();
