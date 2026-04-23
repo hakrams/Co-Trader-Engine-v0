@@ -115,166 +115,15 @@ function updateClock() {
   setText("system-clock", formatTimestamp(new Date().toISOString()));
 }
 
-function getSetupRecords() {
-  const reactions = appState.engine?.reactions || {};
-  const setups = appState.engine?.setups || {};
-  const reactionRecords = Object.entries(reactions).map(([key, item]) => ({
-    key,
-    setup: item.setup || {},
-    reaction: item
-  }));
-
-  const reactionKeys = new Set(reactionRecords.map((record) => record.key));
-  const setupOnlyRecords = Object.entries(setups)
-    .filter(([key]) => !reactionKeys.has(key))
-    .map(([key, setup]) => ({ key, setup, reaction: null }));
-
-  return [...reactionRecords, ...setupOnlyRecords];
-}
-
-function inferChapterFromSetup(setup) {
-  const le = setup.liquidity_engineering || {};
-  if (["active", "monitoring", "ready_for_color_switch"].includes(le.status)) {
-    return {
-      code: "L",
-      name: "Liquidity Engineering",
-      state: le.waiting_for_color_switch ? "waiting for Color Switch" : humanize(le.status),
-      attention: le.waiting_for_color_switch ? 4 : 3
-    };
-  }
-
-  if (setup.lastEvent === "ob_tap") {
-    return {
-      code: "L?",
-      name: "Repeated OB behavior check",
-      state: "OB tap clue received",
-      attention: 2
-    };
-  }
-
-  if (setup.stage === "structure_detected") {
-    return {
-      code: "B/C?",
-      name: "Structure story forming",
-      state: "structure detected",
-      attention: 2
-    };
-  }
-
-  if (setup.stage === "zone_interacted") {
-    return {
-      code: "B/C?",
-      name: "Zone interaction after structure",
-      state: "zone interacted",
-      attention: 3
-    };
-  }
-
-  return {
-    code: "?",
-    name: "Open market clue",
-    state: humanize(setup.stage || setup.lastEvent || "waiting"),
-    attention: 1
-  };
-}
-
-function roleFromTimeframe(timeframe) {
-  const value = String(timeframe || "").toLowerCase();
-  if (value === "15m") return "parent";
-  if (value === "3m") return "unattached";
-  return "unknown";
-}
-
 function buildStories() {
-  const setupStories = getSetupRecords().map((record) => {
-    const setup = record.setup || {};
-    const chapter = inferChapterFromSetup(setup);
-    const updatedAt = setup.updatedAt || setup.createdAt || null;
-
-    return {
-      id: `setup:${record.key}`,
-      source: "live",
-      key: record.key,
-      symbol: setup.symbol || "unknown",
-      timeframe: setup.timeframe || "unknown",
-      direction: setup.direction || "unknown",
-      chapterCode: chapter.code,
-      chapterName: chapter.name,
-      role: roleFromTimeframe(setup.timeframe),
-      state: chapter.state,
-      latestClue: setup.lastEvent || "setup stored",
-      anchorTime: "from live state",
-      ohlc: null,
-      note: "Live setup from current engine state.",
-      updatedAt,
-      attention: chapter.attention
-    };
-  });
-
-  const clueStories = appState.clues.map((clue) => {
-    const chapterCode = clue.chapterHint && clue.chapterHint !== "unknown" ? clue.chapterHint : "?";
-    const chapterNames = {
-      B: "BOS continuation",
-      C: "CHoCH reversal",
-      L: "Liquidity Engineering",
-      "?": "Manual clue"
-    };
-    const pendingRoleKnown = ["parent", "close_child", "extended_child", "orphan"].includes(clue.role || "");
-
-    return {
-      id: `clue:${clue.id}`,
-      source: "history",
-      key: clue.id,
-      parentClueId: clue.parentClueId || null,
-      symbol: clue.symbol || "unknown",
-      timeframe: clue.timeframe || "unknown",
-      direction: clue.direction || "unknown",
-      chapterCode,
-      chapterName: chapterCode === "?"
-        ? (pendingRoleKnown ? "Role known, chapter pending" : "Manual clue")
-        : (chapterNames[chapterCode] || "Manual clue"),
-      role: clue.role || "unknown",
-      state: humanize(clue.clueType),
-      latestClue: clue.clueType || "history clue",
-      anchorTime: clue.obTime || "none",
-      ohlc: clue.ohlc || null,
-      note: clue.note || "Manual history clue.",
-      updatedAt: clue.updatedAt || clue.createdAt,
-      attention: clue.role === "parent" ? 3 : 2
-    };
-  });
-
-  return [...clueStories, ...setupStories];
-}
-
-function buildTfcStories() {
-  const allStories = buildStories();
-  const resolvedStories = allStories.filter((story) => !isOpenClue(story));
-  const neededParentIds = new Set(
-    resolvedStories
-      .map((story) => story.parentClueId)
-      .filter(Boolean)
-      .map((value) => String(value))
-  );
-
-  const parentHeads = allStories.filter(
-    (story) =>
-      story.source === "history" &&
-      story.role === "parent" &&
-      neededParentIds.has(String(story.key))
-  );
-
-  const seen = new Set();
-  return [...resolvedStories, ...parentHeads].filter((story) => {
-    const id = String(story.id);
-    if (seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
+  return Array.isArray(appState.engine?.liveFamilies)
+    ? appState.engine.liveFamilies
+    : [];
 }
 
 function buildDashboardStories() {
-  const families = buildFamilies(buildTfcStories()).filter((family) => !family.loose && family.members.length > 0);
+  const families = (Array.isArray(appState.engine?.familyMap) ? appState.engine.familyMap : [])
+    .filter((family) => !family.loose);
 
   return families.map((family) => {
     const parent = family.parent;
@@ -336,6 +185,7 @@ function isOpenClue(story) {
 function renderStoryCard(story) {
   const ohlc = story.ohlc || {};
   const hasOhlc = ["open", "high", "low", "close"].some((key) => ohlc[key] !== null && ohlc[key] !== undefined);
+  const hasVolume = story.volume !== null && story.volume !== undefined;
 
   return `
     <article class="story-card panel role-${escapeHtml(roleClass(story.role))}">
@@ -355,6 +205,7 @@ function renderStoryCard(story) {
         <div><span>Updated</span><strong>${escapeHtml(formatTimestamp(story.updatedAt))}</strong></div>
       </div>
       ${hasOhlc ? `<p class="ohlc-line">O ${escapeHtml(ohlc.open)} / H ${escapeHtml(ohlc.high)} / L ${escapeHtml(ohlc.low)} / C ${escapeHtml(ohlc.close)}</p>` : ""}
+      ${hasVolume ? `<p class="ohlc-line">Volume ${escapeHtml(story.volume)}</p>` : ""}
       <p class="story-note">${escapeHtml(story.note)}</p>
     </article>
   `;
@@ -374,7 +225,7 @@ function renderDashboard() {
 
   if (!stories.length) {
     grid.classList.add("empty-state");
-    grid.textContent = "No family heads with resolved children yet.";
+    grid.textContent = "No live families yet.";
     return;
   }
 
@@ -530,8 +381,10 @@ function renderFamilyTree(family) {
 }
 
 function renderTfc() {
-  const tfcStories = buildTfcStories();
-  const families = buildFamilies(tfcStories).filter((family) => family.members.length > 0);
+  const fallbackStories = buildStories();
+  const families = Array.isArray(appState.engine?.familyMap)
+    ? appState.engine.familyMap.filter((family) => family.loose || family.parent)
+    : buildFamilies(fallbackStories);
   const familyMap = document.getElementById("family-map");
   const viewMode = getTfcViewMode();
   const collapsed = getCollapsedFamilies();

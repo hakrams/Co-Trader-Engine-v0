@@ -1,7 +1,6 @@
 const {
-  normalizeTimeframe,
   toNumberOrNull,
-  normalizeEventName
+  normalizeParsedEvent
 } = require("./normalizer");
 
 function pickString(...values) {
@@ -36,8 +35,6 @@ function parse(payload) {
     throw new Error("Missing or invalid 'timeframe'");
   }
 
-  const normalizedEvent = normalizeEventName(rawEvent);
-
   const nestedPrice =
     payload.price && typeof payload.price === "object" && !Array.isArray(payload.price)
       ? payload.price
@@ -65,6 +62,8 @@ function parse(payload) {
     }
   }
 
+  const normalized = normalizeParsedEvent(payload);
+
   return {
     raw: {
       payload,
@@ -73,43 +72,34 @@ function parse(payload) {
       received_at: receivedAt
     },
     normalized: {
-      event_raw: normalizedEvent.event_raw,
-      event_family: normalizedEvent.event_family,
-      event_type: normalizedEvent.event_type,
-      structure_type: normalizedEvent.structure_type,
-      zone_type: normalizedEvent.zone_type,
-      direction: normalizedEvent.direction,
-      qualifiers: normalizedEvent.qualifiers,
-
+      ...normalized,
       symbol: rawSymbol,
       timeframe_raw: rawTimeframe,
-      timeframe: normalizeTimeframe(rawTimeframe),
-
       times: {
-        timestamp: pickString(payload.timestamp),
-        bar_time: pickString(payload.bar_time),
-        alert_time: pickString(payload.alert_time),
+        ...normalized.times,
+        timestamp: normalized.times.timestamp || pickString(payload.timestamp),
+        bar_time: normalized.times.bar_time || pickString(payload.bar_time),
+        alert_time: normalized.times.alert_time || pickString(payload.alert_time),
         received_at: receivedAt
       },
-
       price: {
-        open: toNumberOrNull(nestedPrice.open ?? payload.open),
-        high: toNumberOrNull(nestedPrice.high ?? payload.high),
-        low: toNumberOrNull(nestedPrice.low ?? payload.low),
-        close: toNumberOrNull(nestedPrice.close ?? payload.close)
+        open: normalized.price.open ?? toNumberOrNull(nestedPrice.open ?? payload.open),
+        high: normalized.price.high ?? toNumberOrNull(nestedPrice.high ?? payload.high),
+        low: normalized.price.low ?? toNumberOrNull(nestedPrice.low ?? payload.low),
+        close: normalized.price.close ?? toNumberOrNull(nestedPrice.close ?? payload.close)
       },
-
-      volume: toNumberOrNull(payload.volume),
-
+      volume: normalized.volume ?? toNumberOrNull(payload.volume),
       meta: {
-        exchange: pickString(payload.exchange),
-        currency: pickString(nestedMeta.currency, payload.currency),
-        base_currency: pickString(
-          nestedMeta.base_currency,
-          nestedMeta.basecurrency,
-          payload.base_currency
-        ),
-        source: "tradingview",
+        ...normalized.meta,
+        exchange: normalized.meta.exchange ?? pickString(payload.exchange),
+        currency: normalized.meta.currency ?? pickString(nestedMeta.currency, payload.currency),
+        base_currency:
+          normalized.meta.base_currency ??
+          pickString(
+            nestedMeta.base_currency,
+            nestedMeta.basecurrency,
+            payload.base_currency
+          ),
         plots
       }
     }

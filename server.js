@@ -161,6 +161,22 @@ function sameMarketContext(a, b) {
   );
 }
 
+function humanize(value) {
+  return String(value || "unknown").replaceAll("_", " ");
+}
+
+function getChapterRank(code) {
+  return { LB: 6, LC: 6, L: 5, "L?": 3, C: 4, B: 4, "?": 1 }[code] || 1;
+}
+
+function deriveFamilyChapter(parent, members) {
+  const memberChapters = members
+    .map((item) => item.chapterCode)
+    .filter((code) => code && !String(code).includes("?"));
+  const candidates = [parent.chapterCode, ...memberChapters].filter(Boolean);
+  return candidates.sort((a, b) => getChapterRank(b) - getChapterRank(a))[0] || "?";
+}
+
 function chapterNameForHint(hint) {
   if (hint === "B") return "BOS continuation";
   if (hint === "C") return "CHoCH reversal";
@@ -259,6 +275,319 @@ function resolveHistoryChapters(items) {
   return items.map((item) => byId.get(item.id) || item);
 }
 
+function getNormalizedEventTime(normalized = {}, raw = {}) {
+  return (
+    normalized?.times?.timestamp ||
+    normalized?.times?.bar_time ||
+    normalized?.times?.alert_time ||
+    normalized?.times?.received_at ||
+    raw?.received_at ||
+    null
+  );
+}
+
+function getLiveEventTimeMs(item) {
+  const value = getNormalizedEventTime(item?.normalized, item?.raw);
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hasFiniteRange(ohlc) {
+  return Number.isFinite(ohlc?.high) && Number.isFinite(ohlc?.low);
+}
+
+function getRangeMid(ohlc) {
+  if (!hasFiniteRange(ohlc)) return null;
+  return (ohlc.high + ohlc.low) / 2;
+}
+
+function getPriceTolerance(a, b) {
+  const mids = [getRangeMid(a), getRangeMid(b)].filter(Number.isFinite);
+  const reference = mids.length ? mids.reduce((sum, value) => sum + value, 0) / mids.length : 1;
+  return Math.max(0.00005, Math.abs(reference) * 0.0001);
+}
+
+function rangesCloseEnough(a, b) {
+  if (!hasFiniteRange(a) || !hasFiniteRange(b)) {
+    return false;
+  }
+
+  const tolerance = getPriceTolerance(a, b);
+  const highsClose = Math.abs(a.high - b.high) <= tolerance;
+  const lowsClose = Math.abs(a.low - b.low) <= tolerance;
+  const overlaps = a.low <= b.high + tolerance && a.high >= b.low - tolerance;
+
+  return (highsClose && lowsClose) || overlaps;
+}
+
+function getEventDisplayState(event) {
+  if (event.event_type === "ob_created") {
+    return "order block created";
+  }
+
+  if (event.event_type === "ob_tap") {
+    return "order block tapped";
+  }
+
+  if (event.structure_type === "choch") {
+    return "CHoCH detected";
+  }
+
+  if (event.structure_type === "bos") {
+    return "BOS detected";
+  }
+
+  return humanize(event.event_type || event.event_family || "waiting");
+}
+
+function normalizeLiveEvent(item, index) {
+  const normalized = item?.normalized || {};
+  const price = normalized.price || {};
+
+  return {
+    id: item?.raw?.received_at
+      ? `evt_${item.raw.received_at}_${index}`
+      : `evt_${index}`,
+    symbol: String(normalized.symbol || "").trim().toUpperCase() || "UNKNOWN",
+    timeframe: normalizeTimeframe(normalized.timeframe),
+    direction: String(normalized.direction || "unknown").trim(),
+    event_raw: String(normalized.event_raw || "").trim(),
+    event_family: String(normalized.event_family || "unknown").trim(),
+    event_type: String(normalized.event_type || "unknown").trim(),
+    structure_type: normalized.structure_type || null,
+    zone_type: normalized.zone_type || null,
+    ohlc: {
+      open: numberOrNull(price.open),
+      high: numberOrNull(price.high),
+      low: numberOrNull(price.low),
+      close: numberOrNull(price.close)
+    },
+    volume: numberOrNull(normalized.volume),
+    timestamp: getNormalizedEventTime(normalized, item?.raw || {}),
+    updatedAt: getNormalizedEventTime(normalized, item?.raw || {}),
+    raw: item?.raw?.payload || null
+  };
+}
+
+function findBestFamilyMatch(families, event) {
+  const candidates = families.filter((family) => {
+    return family.symbol === event.symbol && family.timeframe === event.timeframe;
+  });
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const rangeMatches = candidates
+    .filter((family) => rangesCloseEnough(family.anchorOhlc, event.ohlc))
+    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+
+  if (rangeMatches.length) {
+    return rangeMatches[0];
+  }
+
+  if (event.event_type !== "ob_created" && candidates.length === 1) {
+    return candidates[0];
+  }
+
+  return null;
+}
+
+function deriveFamilyChapterCode(family) {
+  if (family.structureTypes.has("choch")) return "C";
+  if (family.structureTypes.has("bos")) return "B";
+  if (family.tapCount >= 2) return "L?";
+  return "?";
+}
+
+function deriveFamilyChapterName(code) {
+  if (code === "C") return "CHoCH reversal";
+  if (code === "B") return "BOS continuation";
+  if (code === "L?") return "Liquidity engineering watch";
+  return "Open market clue";
+}
+
+function buildLiveFamiliesFromHistory(history) {
+  const liveEvents = (Array.isArray(history) ? history : [])
+    .map(normalizeLiveEvent)
+    .filter((event) => event.symbol && event.timeframe && event.timeframe !== "unknown")
+    .sort((a, b) => new Date(a.updatedAt || 0) - new Date(b.updatedAt || 0));
+
+  const families = [];
+
+  for (const event of liveEvents) {
+    const match = findBestFamilyMatch(families, event);
+
+    if (match) {
+      match.events.push(event);
+      match.updatedAt = event.updatedAt || match.updatedAt;
+      match.latestClue = event.event_raw || event.event_type || match.latestClue;
+      match.direction = event.direction || match.direction;
+      match.state = getEventDisplayState(event);
+      match.volume = event.volume ?? match.volume ?? null;
+
+      if (!hasFiniteRange(match.anchorOhlc) && hasFiniteRange(event.ohlc)) {
+        match.anchorOhlc = { ...event.ohlc };
+      }
+
+      if (event.event_type === "ob_created" && hasFiniteRange(event.ohlc)) {
+        match.anchorOhlc = { ...event.ohlc };
+        match.anchorTime = event.timestamp || match.anchorTime;
+      }
+
+      if (event.event_type === "ob_tap") {
+        match.tapCount += 1;
+      }
+
+      if (event.structure_type) {
+        match.structureTypes.add(event.structure_type);
+      }
+
+      continue;
+    }
+
+    const familyId = `live_${event.symbol}_${event.timeframe}_${families.length + 1}`;
+
+    families.push({
+      id: familyId,
+      symbol: event.symbol,
+      timeframe: event.timeframe,
+      direction: event.direction || "unknown",
+      anchorOhlc: hasFiniteRange(event.ohlc) ? { ...event.ohlc } : { ...event.ohlc },
+      anchorTime: event.timestamp || event.updatedAt || null,
+      updatedAt: event.updatedAt || null,
+      latestClue: event.event_raw || event.event_type || "event",
+      state: getEventDisplayState(event),
+      volume: event.volume ?? null,
+      tapCount: event.event_type === "ob_tap" ? 1 : 0,
+      structureTypes: new Set(event.structure_type ? [event.structure_type] : []),
+      events: [event]
+    });
+  }
+
+  return families
+    .map((family) => {
+      const chapterCode = deriveFamilyChapterCode(family);
+      const latestEvent = family.events[family.events.length - 1] || null;
+
+      return {
+        id: family.id,
+        source: "live_family",
+        key: family.id,
+        symbol: family.symbol,
+        timeframe: family.timeframe,
+        direction: latestEvent?.direction || family.direction || "unknown",
+        chapterCode,
+        chapterName: deriveFamilyChapterName(chapterCode),
+        role:
+          family.timeframe === "15m"
+            ? "parent"
+            : family.timeframe === "3m"
+              ? "child"
+              : "unknown",
+        state: family.state,
+        latestClue: latestEvent?.event_raw || family.latestClue,
+        anchorTime: family.anchorTime,
+        ohlc: family.anchorOhlc || null,
+        volume: family.volume ?? null,
+        note:
+          family.tapCount >= 2
+            ? `${family.tapCount} taps recorded inside one live family.`
+            : `${family.events.length} normalized event${family.events.length === 1 ? "" : "s"} in this live family.`,
+        updatedAt: family.updatedAt,
+        attention: getChapterRank(chapterCode),
+        eventCount: family.events.length,
+        tapCount: family.tapCount,
+        eventTrail: family.events.map((event) => ({
+          event_raw: event.event_raw,
+          event_type: event.event_type,
+          structure_type: event.structure_type,
+          timestamp: event.timestamp,
+          direction: event.direction,
+          volume: event.volume,
+          ohlc: event.ohlc
+        }))
+      };
+    })
+    .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+}
+
+function findParentFamilyForChild(parents, child) {
+  const candidates = parents.filter((parent) => parent.symbol === child.symbol);
+  const close = candidates.filter((parent) => rangesCloseEnough(parent.ohlc, child.ohlc));
+
+  if (close.length) {
+    return close.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
+  }
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+
+  return null;
+}
+
+function buildFamilyMapFromLiveFamilies(liveFamilies) {
+  const parents = liveFamilies
+    .filter((family) => family.timeframe === "15m")
+    .map((family) => ({
+      id: family.id,
+      parent: family,
+      members: [],
+      loose: false
+    }));
+  const parentById = new Map(parents.map((family) => [family.id, family]));
+  const looseMembers = [];
+
+  for (const family of liveFamilies.filter((item) => item.timeframe !== "15m")) {
+    const parent = family.timeframe === "3m" ? findParentFamilyForChild(parents.map((item) => item.parent), family) : null;
+
+    if (parent) {
+      parentById.get(parent.id)?.members.push({
+        ...family,
+        parentClueId: parent.id,
+        role: rangesCloseEnough(parent.ohlc, family.ohlc) ? "close_child" : "extended_child"
+      });
+    } else {
+      looseMembers.push({
+        ...family,
+        role: family.timeframe === "3m" ? "orphan" : family.role || "unknown"
+      });
+    }
+  }
+
+  const mapped = parents.map((family) => ({
+    ...family,
+    familyChapter: deriveFamilyChapter(family.parent, family.members),
+    closeCount: family.members.filter((member) => member.role === "close_child" || member.role === "child").length,
+    extendedCount: family.members.filter((member) => member.role === "extended_child").length,
+    openCount: family.members.filter((member) => String(member.chapterCode || "?").includes("?")).length
+  }));
+
+  if (looseMembers.length) {
+    mapped.push({
+      id: "unattached",
+      parent: {
+        key: "unattached",
+        symbol: "Unattached",
+        timeframe: "",
+        chapterCode: "?",
+        chapterName: "Waiting for family",
+        state: "open clues",
+        role: "orphan"
+      },
+      members: looseMembers,
+      loose: true,
+      familyChapter: "?",
+      closeCount: 0,
+      extendedCount: 0,
+      openCount: looseMembers.filter((member) => String(member.chapterCode || "?").includes("?")).length
+    });
+  }
+
+  return mapped.sort((a, b) => getChapterRank(b.familyChapter) - getChapterRank(a.familyChapter) || b.members.length - a.members.length);
+}
+
 function hasMinimalWebhookFields(payload) {
   return (
     payload &&
@@ -329,10 +658,14 @@ app.get("/state", (req, res) => {
 
   const currentState = state.getState();
   const reactions = state.getReactions();
+  const liveFamilies = buildLiveFamiliesFromHistory(currentState.history);
+  const familyMap = buildFamilyMapFromLiveFamilies(liveFamilies);
 
   res.json({
     ...currentState,
-    reactions
+    reactions,
+    liveFamilies,
+    familyMap
   });
 });
 
