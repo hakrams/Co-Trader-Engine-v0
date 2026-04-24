@@ -469,43 +469,18 @@ function getTapTrail(item) {
     .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
 }
 
-function buildTapInteractionSpec(targetNode, targetItem, tapNodeId) {
+function buildTapInteractionSpec(targetNode, targetItem) {
   const tapTrail = getTapTrail(targetItem);
   if (!tapTrail.length) {
     return null;
   }
 
   const visibleTrail = tapTrail.slice(-5);
-  const latestTap = visibleTrail[visibleTrail.length - 1] || tapTrail[tapTrail.length - 1];
 
   return {
-    tapNode: {
-      id: tapNodeId,
-      kind: "tap",
-      role: "tap_node",
-      chapter: "T",
-      title: `OB Tap x${tapTrail.length}`,
-      subtitle: `latest tap · ${formatTimestamp(latestTap?.timestamp || latestTap?.updatedAt || latestTap?.alert_time || latestTap?.bar_time)}`,
-      state: "order block tapped",
-      x: targetNode.x + Math.max(0, (targetNode.width - 220) / 2),
-      y: 232,
-      width: 220,
-      createdAt: visibleTrail[0]?.timestamp || null,
-      updatedAt: latestTap?.timestamp || null
-    },
-    edges: visibleTrail.map((tapEvent, index) => {
-      const distanceFromLatest = visibleTrail.length - 1 - index;
-      return {
-        from: tapNodeId,
-        to: targetNode.id,
-        role: "tap",
-        edgeType: "tap",
-        tapIndex: index,
-        tapTotal: visibleTrail.length,
-        opacity: Math.max(0.28, 1 - distanceFromLatest * 0.18),
-        timestamp: tapEvent.timestamp || null
-      };
-    })
+    targetNodeId: targetNode.id,
+    visibleTrail,
+    totalTapCount: tapTrail.length
   };
 }
 
@@ -532,9 +507,10 @@ function buildTreeGraph(families) {
     orphan: 682
   };
   const familyGap = 180;
-  const childGap = 34;
+  const childGap = 118;
   let familyCursor = 240;
   let orphanCursor = 160;
+  const tapTargets = [];
 
   function pushNode(node) {
     const offset = treeViewportState.nodeOffsets[node.id];
@@ -600,27 +576,22 @@ function buildTreeGraph(families) {
       updatedAt: family.updatedAt || parent.updatedAt || null
     });
 
-    const parentTapSpec = buildTapInteractionSpec(
-      parentNode,
-      parent,
-      "tree-tap:parent:" + family.id
-    );
+    const parentTapSpec = buildTapInteractionSpec(parentNode, parent);
 
     if (parentTapSpec) {
-      pushNode(parentTapSpec.tapNode);
-      graph.edges.push(...parentTapSpec.edges);
+      tapTargets.push(parentTapSpec);
     }
 
     members.forEach((member, memberIndex) => {
       const roleLaneOffset = member.role === "extended_child"
-        ? 40
+        ? 82
         : member.role === "conflict_child"
-          ? 84
+          ? 164
           : 0;
       const roleXOffset = member.role === "extended_child"
-        ? 8
+        ? 22
         : member.role === "conflict_child"
-          ? 20
+          ? 54
           : 0;
       const childX = clusterX + memberIndex * (childWidth + childGap);
       const childId = "tree-member:" + (member.id || family.id + ":" + memberIndex);
@@ -646,15 +617,10 @@ function buildTreeGraph(families) {
         role: member.role
       });
 
-      const memberTapSpec = buildTapInteractionSpec(
-        childNode,
-        member,
-        "tree-tap:member:" + (member.id || family.id + ":" + memberIndex)
-      );
+      const memberTapSpec = buildTapInteractionSpec(childNode, member);
 
       if (memberTapSpec) {
-        pushNode(memberTapSpec.tapNode);
-        graph.edges.push(...memberTapSpec.edges);
+        tapTargets.push(memberTapSpec);
       }
     });
 
@@ -676,24 +642,61 @@ function buildTreeGraph(families) {
       subtitle: roleLabel(member.role || "orphan") + " · " + member.state + " · " + humanize(member.direction),
       state: member.state,
       x: orphanCursor,
-      y: rowY.orphan + (index % 2) * 34,
+      y: rowY.orphan + (index % 2) * 64,
       width: childWidth,
       createdAt: member.anchorTime || member.timestamp || null,
       updatedAt: member.updatedAt || null
     });
 
-    const orphanTapSpec = buildTapInteractionSpec(
-      orphanNode,
-      member,
-      "tree-tap:orphan:" + (member.id || index)
-    );
+    const orphanTapSpec = buildTapInteractionSpec(orphanNode, member);
 
     if (orphanTapSpec) {
-      pushNode(orphanTapSpec.tapNode);
-      graph.edges.push(...orphanTapSpec.edges);
+      tapTargets.push(orphanTapSpec);
     }
     orphanCursor += childWidth + childGap;
   });
+
+  if (tapTargets.length) {
+    const allVisibleTaps = tapTargets.flatMap((target) => target.visibleTrail);
+    const latestTap = allVisibleTaps
+      .slice()
+      .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))[0];
+    const totalTapCount = tapTargets.reduce((sum, target) => sum + target.totalTapCount, 0);
+    const tapNodeWidth = 220;
+    const tapHubCenter = Number.isFinite(graph.bounds.minX) && Number.isFinite(graph.bounds.maxX)
+      ? (graph.bounds.minX + graph.bounds.maxX) / 2
+      : 840;
+    const tapNode = pushNode({
+      id: "tree-tap:hub",
+      kind: "tap",
+      role: "tap_node",
+      chapter: "T",
+      title: `OB Tap x${totalTapCount}`,
+      subtitle: `latest tap · ${formatTimestamp(latestTap?.timestamp || latestTap?.updatedAt || latestTap?.alert_time || latestTap?.bar_time)}`,
+      state: "order block tapped",
+      x: tapHubCenter - tapNodeWidth / 2,
+      y: 232,
+      width: tapNodeWidth,
+      createdAt: allVisibleTaps[0]?.timestamp || null,
+      updatedAt: latestTap?.timestamp || null
+    });
+
+    tapTargets.forEach((target) => {
+      target.visibleTrail.forEach((tapEvent, index) => {
+        const distanceFromLatest = target.visibleTrail.length - 1 - index;
+        graph.edges.push({
+          from: tapNode.id,
+          to: target.targetNodeId,
+          role: "tap",
+          edgeType: "tap",
+          tapIndex: index,
+          tapTotal: target.visibleTrail.length,
+          opacity: Math.max(0.28, 1 - distanceFromLatest * 0.18),
+          timestamp: tapEvent.timestamp || null
+        });
+      });
+    });
+  }
 
   const bounds = graph.bounds;
   if (Number.isFinite(bounds.minX)) {
