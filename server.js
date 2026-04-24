@@ -333,6 +333,22 @@ function rangesCloseEnough(a, b) {
   return (highsClose && lowsClose) || overlaps;
 }
 
+function getContainmentTolerance(parentOhlc, childOhlc) {
+  return Math.min(0.00002, getPriceTolerance(parentOhlc, childOhlc));
+}
+
+function childInsideParentRange(parentOhlc, childOhlc) {
+  if (!hasFiniteRange(parentOhlc) || !hasFiniteRange(childOhlc)) {
+    return false;
+  }
+
+  const tolerance = getContainmentTolerance(parentOhlc, childOhlc);
+  return (
+    childOhlc.high <= parentOhlc.high + tolerance &&
+    childOhlc.low >= parentOhlc.low - tolerance
+  );
+}
+
 function getEventDisplayState(event) {
   if (event.event_type === "ob_created") {
     return "order block created";
@@ -423,7 +439,16 @@ function deriveFamilyChapterCode(family) {
   return "?";
 }
 
+function combineLiquidityChapter(baseCode, hasLiquidityContext) {
+  if (!hasLiquidityContext) return baseCode;
+  if (baseCode === "B") return "LB";
+  if (baseCode === "C") return "LC";
+  return baseCode;
+}
+
 function deriveFamilyChapterName(code) {
+  if (code === "LC") return "Liquidity engineering + CHoCH reversal";
+  if (code === "LB") return "Liquidity engineering + BOS continuation";
   if (code === "C") return "CHoCH reversal";
   if (code === "B") return "BOS continuation";
   if (code === "L" || code === "L?") return "Liquidity engineering";
@@ -447,6 +472,10 @@ function hasRepeatedChildrenLiquidityContext(members) {
   return closeChildren.length >= 2;
 }
 
+function createWindowFamilyId(prefix, event, index) {
+  return `${prefix}_${event.symbol}_${event.timeframe}_${index + 1}`;
+}
+
 function buildLiveFamiliesFromHistory(history) {
   const liveEvents = (Array.isArray(history) ? history : [])
     .map(normalizeLiveEvent)
@@ -454,90 +483,228 @@ function buildLiveFamiliesFromHistory(history) {
     .sort((a, b) => new Date(a.updatedAt || 0) - new Date(b.updatedAt || 0));
 
   const families = [];
+  const activeParentsBySymbol = new Map();
+  const childFamiliesBySymbol = new Map();
+
+  function ensureChildFamilyBucket(symbol) {
+    if (!childFamiliesBySymbol.has(symbol)) {
+      childFamiliesBySymbol.set(symbol, []);
+    }
+
+    return childFamiliesBySymbol.get(symbol);
+  }
+
+  function closeActiveParent(symbol, closeEvent) {
+    const activeParent = activeParentsBySymbol.get(symbol);
+
+    if (!activeParent) {
+      return;
+    }
+
+    activeParent.closed = true;
+    activeParent.closedAt = closeEvent.timestamp || closeEvent.updatedAt || null;
+    activeParent.closeReason =
+      closeEvent.structure_type === "choch"
+        ? "15m CHoCH closed this parent window."
+        : closeEvent.structure_type === "bos"
+          ? "15m BOS closed this parent window."
+          : "Parent window closed.";
+    activeParent.latestClue =
+      closeEvent.event_raw || closeEvent.event_type || activeParent.latestClue;
+    activeParent.state = getEventDisplayState(closeEvent);
+    activeParent.direction = closeEvent.direction || activeParent.direction;
+    activeParent.updatedAt = closeEvent.updatedAt || activeParent.updatedAt;
+    activeParent.events.push(closeEvent);
+    activeParentsBySymbol.delete(symbol);
+  }
+
+  function findExistingChildFamily(symbol, event) {
+    const candidates = ensureChildFamilyBucket(symbol).filter((family) => {
+      return (
+        family.direction === event.direction &&
+        rangesCloseEnough(family.anchorOhlc, event.ohlc)
+      );
+    });
+
+    if (!candidates.length) {
+      return null;
+    }
+
+    return candidates.sort(
+      (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0)
+    )[0];
+  }
 
   for (const event of liveEvents) {
-    const match = findBestFamilyMatch(families, event);
+    if (event.timeframe === "15m" && event.event_type === "ob_created") {
+      closeActiveParent(event.symbol, event);
 
-    if (match) {
-      match.events.push(event);
-      match.updatedAt = event.updatedAt || match.updatedAt;
-      match.latestClue = event.event_raw || event.event_type || match.latestClue;
-      match.direction = event.direction || match.direction;
-      match.state = getEventDisplayState(event);
-      match.volume = event.volume ?? match.volume ?? null;
+      const familyId = createWindowFamilyId("parent", event, families.length);
+      const family = {
+        id: familyId,
+        source: "live_family",
+        key: familyId,
+        symbol: event.symbol,
+        timeframe: event.timeframe,
+        direction: event.direction || "unknown",
+        chapterCode: "?",
+        chapterName: deriveFamilyChapterName("?"),
+        role: "parent",
+        state: getEventDisplayState(event),
+        latestClue: event.event_raw || event.event_type || "event",
+        anchorTime: event.timestamp || event.updatedAt || null,
+        anchorOhlc: hasFiniteRange(event.ohlc) ? { ...event.ohlc } : { ...event.ohlc },
+        ohlc: hasFiniteRange(event.ohlc) ? { ...event.ohlc } : event.ohlc || null,
+        volume: event.volume ?? null,
+        note: "15m OB created opened this parent window.",
+        updatedAt: event.updatedAt || null,
+        attention: getChapterRank("?"),
+        eventCount: 1,
+        tapCount: 0,
+        closed: false,
+        closedAt: null,
+        closeReason: null,
+        events: [event]
+      };
 
-      if (!hasFiniteRange(match.anchorOhlc) && hasFiniteRange(event.ohlc)) {
-        match.anchorOhlc = { ...event.ohlc };
-      }
+      families.push(family);
+      activeParentsBySymbol.set(event.symbol, family);
+      continue;
+    }
 
-      if (event.event_type === "ob_created" && hasFiniteRange(event.ohlc)) {
-        match.anchorOhlc = { ...event.ohlc };
-        match.anchorTime = event.timestamp || match.anchorTime;
-      }
+    if (
+      event.timeframe === "15m" &&
+      event.event_type === "structure_detected"
+    ) {
+      const activeParent = activeParentsBySymbol.get(event.symbol);
 
-      if (event.event_type === "ob_tap") {
-        match.tapCount += 1;
-      }
+      if (activeParent) {
+        const parentDirection = String(activeParent.direction || "unknown").trim();
+        const structureDirection = String(event.direction || "unknown").trim();
+        const directionAligned =
+          parentDirection !== "unknown" &&
+          structureDirection !== "unknown" &&
+          parentDirection === structureDirection;
 
-      if (event.structure_type) {
-        match.structureTypes.add(event.structure_type);
+        if (directionAligned) {
+          const hasLiquidityContext = activeParent.chapterCode === "L";
+          const structureCode = event.structure_type === "choch" ? "C" : "B";
+          const chapterCode = combineLiquidityChapter(
+            structureCode,
+            hasLiquidityContext
+          );
+          activeParent.chapterCode = chapterCode;
+          activeParent.chapterName = deriveFamilyChapterName(chapterCode);
+          activeParent.attention = getChapterRank(chapterCode);
+          closeActiveParent(event.symbol, event);
+        }
       }
 
       continue;
     }
 
-    const familyId = `live_${event.symbol}_${event.timeframe}_${families.length + 1}`;
+    if (event.timeframe === "15m") {
+      const activeParent = activeParentsBySymbol.get(event.symbol);
 
-    families.push({
-      id: familyId,
-      symbol: event.symbol,
-      timeframe: event.timeframe,
-      direction: event.direction || "unknown",
-      anchorOhlc: hasFiniteRange(event.ohlc) ? { ...event.ohlc } : { ...event.ohlc },
-      anchorTime: event.timestamp || event.updatedAt || null,
-      updatedAt: event.updatedAt || null,
-      latestClue: event.event_raw || event.event_type || "event",
-      state: getEventDisplayState(event),
-      volume: event.volume ?? null,
-      tapCount: event.event_type === "ob_tap" ? 1 : 0,
-      structureTypes: new Set(event.structure_type ? [event.structure_type] : []),
-      events: [event]
-    });
+      if (activeParent) {
+        activeParent.events.push(event);
+        activeParent.latestClue =
+          event.event_raw || event.event_type || activeParent.latestClue;
+        activeParent.state = getEventDisplayState(event);
+        activeParent.updatedAt = event.updatedAt || activeParent.updatedAt;
+        activeParent.direction = event.direction || activeParent.direction;
+        activeParent.volume = event.volume ?? activeParent.volume ?? null;
+
+        if (event.event_type === "ob_tap") {
+          activeParent.tapCount += 1;
+        }
+      }
+
+      continue;
+    }
+
+    if (event.timeframe !== "3m") {
+      continue;
+    }
+
+    if (event.event_type === "ob_created") {
+      const activeParent = activeParentsBySymbol.get(event.symbol) || null;
+      const familyId = createWindowFamilyId("child", event, families.length);
+      const childFamily = {
+        id: familyId,
+        source: "live_family",
+        key: familyId,
+        symbol: event.symbol,
+        timeframe: event.timeframe,
+        direction: event.direction || "unknown",
+        chapterCode: "?",
+        chapterName: deriveFamilyChapterName("?"),
+        role: activeParent ? "child" : "orphan",
+        state: getEventDisplayState(event),
+        latestClue: event.event_raw || event.event_type || "event",
+        anchorTime: event.timestamp || event.updatedAt || null,
+        anchorOhlc: hasFiniteRange(event.ohlc) ? { ...event.ohlc } : { ...event.ohlc },
+        ohlc: hasFiniteRange(event.ohlc) ? { ...event.ohlc } : event.ohlc || null,
+        volume: event.volume ?? null,
+        note: activeParent
+          ? `3m OB created during active parent window ${activeParent.symbol} 15m.`
+          : "3m OB created outside any active parent window, so it is orphan for now.",
+        updatedAt: event.updatedAt || null,
+        attention: getChapterRank("?"),
+        eventCount: 1,
+        tapCount: 0,
+        parentWindowId: activeParent ? activeParent.id : null,
+        parentWindowDirection: activeParent ? activeParent.direction : null,
+        events: [event]
+      };
+
+      families.push(childFamily);
+      ensureChildFamilyBucket(event.symbol).push(childFamily);
+      continue;
+    }
+
+    const existingChild = findExistingChildFamily(event.symbol, event);
+
+    if (!existingChild) {
+      continue;
+    }
+
+    existingChild.events.push(event);
+    existingChild.latestClue =
+      event.event_raw || event.event_type || existingChild.latestClue;
+    existingChild.state = getEventDisplayState(event);
+    existingChild.updatedAt = event.updatedAt || existingChild.updatedAt;
+    existingChild.direction = event.direction || existingChild.direction;
+    existingChild.volume = event.volume ?? existingChild.volume ?? null;
+    existingChild.eventCount += 1;
+
+    if (event.event_type === "ob_tap") {
+      existingChild.tapCount += 1;
+    }
+
+    if (event.structure_type === "choch") {
+      existingChild.chapterCode = "C";
+      existingChild.chapterName = deriveFamilyChapterName("C");
+      existingChild.attention = getChapterRank("C");
+    } else if (event.structure_type === "bos") {
+      existingChild.chapterCode = "B";
+      existingChild.chapterName = deriveFamilyChapterName("B");
+      existingChild.attention = getChapterRank("B");
+    } else if (
+      event.event_type === "ob_tap" &&
+      existingChild.tapCount >= 2 &&
+      existingChild.chapterCode === "?"
+    ) {
+      existingChild.chapterCode = "L";
+      existingChild.chapterName = deriveFamilyChapterName("L");
+      existingChild.attention = getChapterRank("L");
+    }
   }
 
   return families
     .map((family) => {
-      const chapterCode = deriveFamilyChapterCode(family);
-      const latestEvent = family.events[family.events.length - 1] || null;
-
       return {
-        id: family.id,
-        source: "live_family",
-        key: family.id,
-        symbol: family.symbol,
-        timeframe: family.timeframe,
-        direction: latestEvent?.direction || family.direction || "unknown",
-        chapterCode,
-        chapterName: deriveFamilyChapterName(chapterCode),
-        role:
-          family.timeframe === "15m"
-            ? "parent"
-            : family.timeframe === "3m"
-              ? "child"
-              : "unknown",
-        state: family.state,
-        latestClue: latestEvent?.event_raw || family.latestClue,
-        anchorTime: family.anchorTime,
-        ohlc: family.anchorOhlc || null,
-        volume: family.volume ?? null,
-        note:
-          family.tapCount >= 2
-            ? `${family.tapCount} taps recorded inside one live family.`
-            : `${family.events.length} normalized event${family.events.length === 1 ? "" : "s"} in this live family.`,
-        updatedAt: family.updatedAt,
-        attention: getChapterRank(chapterCode),
-        eventCount: family.events.length,
-        tapCount: family.tapCount,
+        ...family,
         eventTrail: family.events.map((event) => ({
           event_raw: event.event_raw,
           event_type: event.event_type,
@@ -550,21 +717,6 @@ function buildLiveFamiliesFromHistory(history) {
       };
     })
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-}
-
-function findParentFamilyForChild(parents, child) {
-  const candidates = parents.filter((parent) => parent.symbol === child.symbol);
-  const close = candidates.filter((parent) => rangesCloseEnough(parent.ohlc, child.ohlc));
-
-  if (close.length) {
-    return close.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
-  }
-
-  if (candidates.length === 1) {
-    return candidates[0];
-  }
-
-  return null;
 }
 
 function buildFamilyMapFromLiveFamilies(liveFamilies) {
@@ -580,7 +732,10 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
   const looseMembers = [];
 
   for (const family of liveFamilies.filter((item) => item.timeframe !== "15m")) {
-    const parent = family.timeframe === "3m" ? findParentFamilyForChild(parents.map((item) => item.parent), family) : null;
+    const parent =
+      family.timeframe === "3m" && family.parentWindowId
+        ? parentById.get(family.parentWindowId)?.parent || null
+        : null;
 
     if (parent) {
       const parentDirection = String(parent.direction || "unknown").trim();
@@ -595,7 +750,7 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
         parentClueId: parent.id,
         role: directionConflict
           ? "conflict_child"
-          : rangesCloseEnough(parent.ohlc, family.ohlc)
+          : childInsideParentRange(parent.ohlc, family.ohlc)
             ? "close_child"
             : "extended_child"
       });
@@ -628,12 +783,11 @@ function buildFamilyMapFromLiveFamilies(liveFamilies) {
     const repeatedChildrenLiquidity = hasRepeatedChildrenLiquidityContext(
       family.members
     );
-    const familyChapter =
-      family.parent.chapterCode && family.parent.chapterCode !== "?"
-        ? family.parent.chapterCode
-        : repeatedChildrenLiquidity
-          ? "L"
-          : "?";
+    const familyChapter = family.parent.chapterCode && family.parent.chapterCode !== "?"
+      ? combineLiquidityChapter(family.parent.chapterCode, repeatedChildrenLiquidity)
+      : repeatedChildrenLiquidity
+        ? "L"
+        : "?";
 
     return {
       ...family,
