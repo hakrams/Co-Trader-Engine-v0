@@ -17,6 +17,8 @@ const treeViewportState = {
   scale: 1,
   autoFitted: false,
   nodeOffsets: JSON.parse(localStorage.getItem(TREE_NODE_LAYOUT_KEY) || "{}"),
+  layoutDirty: false,
+  nodesLocked: true,
   nodeDragId: null,
   nodeDragKind: null,
   nodeDragPointerId: null,
@@ -27,6 +29,8 @@ const treeViewportState = {
   pointers: new Map(),
   pinchDistance: null,
   pinchScale: 1,
+  pinchMidX: 0,
+  pinchMidY: 0,
   dragPointerId: null,
   dragStartX: 0,
   dragStartY: 0,
@@ -573,6 +577,8 @@ function renderTreeWorkspace(families) {
 
   return "<div class=\"tree-map-shell\">" +
     "<div class=\"tree-map-controls\" aria-label=\"Tree navigation\">" +
+      "<button type=\"button\" data-tree-zoom=\"lock\" aria-label=\"Toggle move lock\">" + (treeViewportState.nodesLocked ? "Unlock" : "Lock") + "</button>" +
+      "<button type=\"button\" data-tree-zoom=\"save\" aria-label=\"Save layout\">Save</button>" +
       "<button type=\"button\" data-tree-zoom=\"in\" aria-label=\"Zoom in\">+</button>" +
       "<button type=\"button\" data-tree-zoom=\"out\" aria-label=\"Zoom out\">-</button>" +
       "<button type=\"button\" data-tree-zoom=\"reset\" aria-label=\"Reset view\">Reset</button>" +
@@ -602,6 +608,7 @@ function applyTreeViewportTransform() {
 
 function saveTreeNodeLayout() {
   localStorage.setItem(TREE_NODE_LAYOUT_KEY, JSON.stringify(treeViewportState.nodeOffsets));
+  treeViewportState.layoutDirty = false;
 }
 
 function fitTreeViewport(preserveScale = false) {
@@ -668,6 +675,7 @@ function treeNodeBand(kind) {
 function setupTreeNodeDragging(viewport) {
   viewport.querySelectorAll("[data-node-id]").forEach((nodeEl) => {
     nodeEl.onpointerdown = (event) => {
+      if (treeViewportState.nodesLocked) return;
       event.stopPropagation();
       nodeEl.setPointerCapture(event.pointerId);
       treeViewportState.nodeDragId = nodeEl.dataset.nodeId;
@@ -705,6 +713,7 @@ function setupTreeNodeDragging(viewport) {
         x: Math.round(nextLeft - baseLeft),
         y: Math.round(nextTop - baseTop)
       };
+      treeViewportState.layoutDirty = true;
       nodeEl.style.left = `${nextLeft}px`;
       nodeEl.style.top = `${nextTop}px`;
       updateTreeEdges();
@@ -714,7 +723,6 @@ function setupTreeNodeDragging(viewport) {
       if (treeViewportState.nodeDragId !== nodeEl.dataset.nodeId) return;
       if (event && treeViewportState.nodeDragPointerId !== event.pointerId) return;
 
-      saveTreeNodeLayout();
       treeViewportState.nodeDragId = null;
       treeViewportState.nodeDragKind = null;
       treeViewportState.nodeDragPointerId = null;
@@ -754,6 +762,7 @@ function refreshTreeDragAnchor() {
 function setupTreeViewport() {
   const viewport = document.getElementById("tree-map-viewport");
   const canvas = document.getElementById("tree-map-canvas");
+  const controls = document.querySelector(".tree-map-controls");
   if (!viewport || !canvas) return;
 
   if (!treeViewportState.autoFitted) {
@@ -785,6 +794,7 @@ function setupTreeViewport() {
 
   viewport.onpointerdown = (event) => {
     if (event.target.closest(".tree-map-controls")) return;
+    if (treeViewportState.nodeDragId) return;
     viewport.setPointerCapture(event.pointerId);
     treeViewportState.pointers.set(event.pointerId, {
       x: event.clientX,
@@ -797,6 +807,9 @@ function setupTreeViewport() {
       const points = Array.from(treeViewportState.pointers.values());
       treeViewportState.pinchDistance = getPointerDistance(points);
       treeViewportState.pinchScale = treeViewportState.scale;
+      const rect = viewport.getBoundingClientRect();
+      treeViewportState.pinchMidX = (points[0].x + points[1].x) / 2 - rect.left;
+      treeViewportState.pinchMidY = (points[0].y + points[1].y) / 2 - rect.top;
     }
   };
 
@@ -813,9 +826,16 @@ function setupTreeViewport() {
       const distance = getPointerDistance(points);
 
       if (distance && treeViewportState.pinchDistance) {
+        const rect = viewport.getBoundingClientRect();
+        const focusX = (points[0].x + points[1].x) / 2 - rect.left;
+        const focusY = (points[0].y + points[1].y) / 2 - rect.top;
+        const worldX = (focusX - treeViewportState.x) / treeViewportState.scale;
+        const worldY = (focusY - treeViewportState.y) / treeViewportState.scale;
         treeViewportState.scale = clampTreeScale(
           treeViewportState.pinchScale * (distance / treeViewportState.pinchDistance)
         );
+        treeViewportState.x = focusX - worldX * treeViewportState.scale;
+        treeViewportState.y = focusY - worldY * treeViewportState.scale;
         applyTreeViewportTransform();
       }
 
@@ -847,9 +867,25 @@ function setupTreeViewport() {
   viewport.onpointercancel = endPointer;
   viewport.onlostpointercapture = endPointer;
 
-  viewport.querySelectorAll("[data-tree-zoom]").forEach((button) => {
+  (controls || document).querySelectorAll("[data-tree-zoom]").forEach((button) => {
     button.onclick = () => {
       const action = button.dataset.treeZoom;
+
+      if (action === "lock") {
+        treeViewportState.nodesLocked = !treeViewportState.nodesLocked;
+        button.textContent = treeViewportState.nodesLocked ? "Unlock" : "Lock";
+        return;
+      }
+
+      if (action === "save") {
+        saveTreeNodeLayout();
+        const originalText = button.textContent;
+        button.textContent = "Saved";
+        window.setTimeout(() => {
+          button.textContent = originalText;
+        }, 900);
+        return;
+      }
 
       if (action === "reset") {
         resetTreeViewport();
