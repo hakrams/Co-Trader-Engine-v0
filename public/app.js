@@ -3,6 +3,7 @@ const TEACHING_NOTES_KEY = "coTraderV2TeachingNotes";
 const TFC_VIEW_KEY = "coTraderV2TfcView";
 const TFC_COLLAPSE_KEY = "coTraderV2TfcCollapsed";
 const TREE_NODE_LAYOUT_KEY = "coTraderV2TreeNodeLayout";
+const TREE_LAYOUT_API = "/api/tree-layout";
 
 let appState = {
   engine: null,
@@ -17,7 +18,9 @@ const treeViewportState = {
   scale: 1,
   autoFitted: false,
   nodeOffsets: JSON.parse(localStorage.getItem(TREE_NODE_LAYOUT_KEY) || "{}"),
+  layoutUpdatedAt: null,
   layoutDirty: false,
+  saving: false,
   nodesLocked: true,
   nodeDragId: null,
   nodeDragKind: null,
@@ -26,6 +29,7 @@ const treeViewportState = {
   nodeDragStartY: 0,
   nodeDragInitialOffsetX: 0,
   nodeDragInitialOffsetY: 0,
+  nodeDragTargets: [],
   pointers: new Map(),
   pinchDistance: null,
   pinchScale: 1,
@@ -204,6 +208,37 @@ function roleClass(value) {
     .replaceAll("_", "-");
 }
 
+function readinessStage(state) {
+  const normalized = String(state || "").trim().toLowerCase();
+
+  if (normalized.includes("tapped")) {
+    return "actionable";
+  }
+
+  if (normalized.includes("bos") || normalized.includes("choch")) {
+    return "attention";
+  }
+
+  if (normalized.includes("created")) {
+    return "monitoring";
+  }
+
+  return "monitoring";
+}
+
+function tokenClass(prefix, value) {
+  const normalized = String(value || "unknown")
+    .trim()
+    .toLowerCase()
+    .replaceAll("?", "q")
+    .replaceAll("+", "-plus-")
+    .replaceAll("/", "-")
+    .replaceAll(" ", "-")
+    .replaceAll("_", "-");
+
+  return `${prefix}-${normalized || "unknown"}`;
+}
+
 function isOpenClue(story) {
   return String(story.chapterCode || "?").includes("?");
 }
@@ -212,9 +247,10 @@ function renderStoryCard(story) {
   const ohlc = story.ohlc || {};
   const hasOhlc = ["open", "high", "low", "close"].some((key) => ohlc[key] !== null && ohlc[key] !== undefined);
   const hasVolume = story.volume !== null && story.volume !== undefined;
+  const readiness = readinessStage(story.state);
 
   return `
-    <article class="story-card panel role-${escapeHtml(roleClass(story.role))}">
+    <article class="story-card panel role-${escapeHtml(roleClass(story.role))} ${escapeHtml(tokenClass("chapter", story.chapterCode))} ${escapeHtml(tokenClass("state", story.state))} ${escapeHtml(tokenClass("readiness", readiness))}">
       <div class="story-card-head">
         <div>
           <p class="chapter-code">Chapter ${escapeHtml(story.chapterCode)}</p>
@@ -350,8 +386,9 @@ function buildFamilies(stories) {
 
 function renderFamilyMember(member, options = {}) {
   const chapterCode = options.chapterCode || member.chapterCode || "?";
+  const readiness = readinessStage(member.state);
 
-  return "<article class=\"family-member role-" + escapeHtml(roleClass(member.role)) + "\">" +
+  return "<article class=\"family-member role-" + escapeHtml(roleClass(member.role)) + " " + escapeHtml(tokenClass("chapter", chapterCode)) + " " + escapeHtml(tokenClass("state", member.state)) + " " + escapeHtml(tokenClass("readiness", readiness)) + "\">" +
     "<div><strong>" + escapeHtml(member.symbol) + " " + escapeHtml(member.timeframe) + " · Chapter " + escapeHtml(chapterCode) + "</strong>" +
     "<p>" + escapeHtml(roleLabel(member.role)) + " · " + escapeHtml(member.state) + " · " + escapeHtml(humanize(member.direction)) + "</p></div>" +
     "<span class=\"role-pill\">" + escapeHtml(formatTimestamp(member.anchorTime)) + "</span></article>";
@@ -364,8 +401,9 @@ function renderFamilyCard(family, isCollapsed) {
   const parentHtml = family.loose ? "" : renderFamilyMember(parent, { chapterCode: family.familyChapter });
   const openAttr = isCollapsed ? "" : " open";
   const childLabel = family.memberCount === 1 ? "child" : "children";
+  const readiness = readinessStage(family.state);
 
-  return "<article class=\"family-card " + familySizeClass + (family.loose ? " family-loose" : "") + "\"><details data-family-id=\"" + escapeHtml(family.id) + "\"" + openAttr + "><summary>" +
+  return "<article class=\"family-card " + familySizeClass + " " + escapeHtml(tokenClass("chapter", family.familyChapter)) + " " + escapeHtml(tokenClass("state", family.state)) + " " + escapeHtml(tokenClass("readiness", readiness)) + (family.loose ? " family-loose" : "") + "\"><details data-family-id=\"" + escapeHtml(family.id) + "\"" + openAttr + "><summary>" +
     "<div><p class=\"chapter-code\">Family Chapter " + escapeHtml(family.familyChapter) + "</p>" +
     "<h3>" + escapeHtml(parent.symbol) + " " + escapeHtml(parent.timeframe) + " " + (family.loose ? "Holding Area" : "Family") + "</h3>" +
     "<p>" + escapeHtml(family.state) + " · " + escapeHtml(family.familyChapterName) + "</p></div>" +
@@ -415,9 +453,60 @@ function renderFamilyTree(family) {
 }
 
 function renderTreeGraphNode(node) {
-  return "<article id=\"" + escapeHtml(node.id) + "\" data-node-id=\"" + escapeHtml(node.id) + "\" data-node-kind=\"" + escapeHtml(node.kind) + "\" class=\"tree-graph-node tree-node role-" + escapeHtml(roleClass(node.role)) + " tree-node-kind-" + escapeHtml(node.kind) + "\" style=\"left:" + escapeHtml(String(node.x)) + "px;top:" + escapeHtml(String(node.y)) + "px;width:" + escapeHtml(String(node.width)) + "px;\">" +
+  return "<article id=\"" + escapeHtml(node.id) + "\" data-node-id=\"" + escapeHtml(node.id) + "\" data-node-kind=\"" + escapeHtml(node.kind) + "\" class=\"tree-graph-node tree-node role-" + escapeHtml(roleClass(node.role)) + " tree-node-kind-" + escapeHtml(node.kind) + " " + escapeHtml(tokenClass("chapter", node.chapter)) + " " + escapeHtml(tokenClass("state", node.state)) + " " + escapeHtml(tokenClass("readiness", readinessStage(node.state))) + "\" style=\"left:" + escapeHtml(String(node.x)) + "px;top:" + escapeHtml(String(node.y)) + "px;width:" + escapeHtml(String(node.width)) + "px;\">" +
     "<span class=\"node-chapter\">" + escapeHtml(node.chapter) + "</span>" +
-    "<div><strong>" + escapeHtml(node.title) + "</strong><p>" + escapeHtml(node.subtitle) + "</p></div></article>";
+    "<div><strong>" + escapeHtml(node.title) + "</strong><p>" + escapeHtml(node.subtitle) + "</p>" +
+    (node.createdAt || node.updatedAt
+      ? "<p class=\"tree-node-meta\">Created " + escapeHtml(formatTimestamp(node.createdAt)) + " · Updated " + escapeHtml(formatTimestamp(node.updatedAt)) + "</p>"
+      : "") +
+    "</div></article>";
+}
+
+function getTapTrail(item) {
+  const events = Array.isArray(item?.eventTrail) ? item.eventTrail : [];
+  return events
+    .filter((event) => event && event.event_type === "ob_tap")
+    .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+}
+
+function buildTapInteractionSpec(targetNode, targetItem, tapNodeId) {
+  const tapTrail = getTapTrail(targetItem);
+  if (!tapTrail.length) {
+    return null;
+  }
+
+  const visibleTrail = tapTrail.slice(-5);
+  const latestTap = visibleTrail[visibleTrail.length - 1] || tapTrail[tapTrail.length - 1];
+
+  return {
+    tapNode: {
+      id: tapNodeId,
+      kind: "tap",
+      role: "tap_node",
+      chapter: "T",
+      title: `OB Tap x${tapTrail.length}`,
+      subtitle: `latest tap · ${formatTimestamp(latestTap?.timestamp || latestTap?.updatedAt || latestTap?.alert_time || latestTap?.bar_time)}`,
+      state: "order block tapped",
+      x: targetNode.x + Math.max(0, (targetNode.width - 220) / 2),
+      y: 232,
+      width: 220,
+      createdAt: visibleTrail[0]?.timestamp || null,
+      updatedAt: latestTap?.timestamp || null
+    },
+    edges: visibleTrail.map((tapEvent, index) => {
+      const distanceFromLatest = visibleTrail.length - 1 - index;
+      return {
+        from: tapNodeId,
+        to: targetNode.id,
+        role: "tap",
+        edgeType: "tap",
+        tapIndex: index,
+        tapTotal: visibleTrail.length,
+        opacity: Math.max(0.28, 1 - distanceFromLatest * 0.18),
+        timestamp: tapEvent.timestamp || null
+      };
+    })
+  };
 }
 
 function buildTreeGraph(families) {
@@ -459,6 +548,7 @@ function buildTreeGraph(families) {
     graph.bounds.minY = Math.min(graph.bounds.minY, node.y);
     graph.bounds.maxX = Math.max(graph.bounds.maxX, node.x + node.width);
     graph.bounds.maxY = Math.max(graph.bounds.maxY, node.y + 86);
+    return node;
   }
 
   pushNode({
@@ -468,9 +558,12 @@ function buildTreeGraph(families) {
     chapter: "?",
     title: "Granddad Layer",
     subtitle: "future higher context placeholder",
+    state: "placeholder",
     x: 720,
     y: rowY.granddad,
-    width: granddadWidth
+    width: granddadWidth,
+    createdAt: null,
+    updatedAt: null
   });
 
   families.filter((family) => !family.loose).forEach((family, familyIndex) => {
@@ -490,19 +583,33 @@ function buildTreeGraph(families) {
     const clusterWidth = Math.max(parentWidth + 120, childSpan + 80);
     const parentX = familyCursor;
     const clusterX = parentX + (parentWidth - childSpan) / 2;
-    const parentId = "tree-parent-" + familyIndex;
+    const parentId = "tree-parent:" + family.id;
 
-    pushNode({
+    const parentNode = pushNode({
       id: parentId,
       kind: "parent",
       role: "parent",
       chapter: family.familyChapter,
       title: parent.symbol + " " + parent.timeframe + " Parent",
       subtitle: parent.state + " · " + family.familyChapterName,
+      state: parent.state,
       x: parentX,
       y: rowY.parent,
-      width: parentWidth
+      width: parentWidth,
+      createdAt: parent.anchorTime || null,
+      updatedAt: family.updatedAt || parent.updatedAt || null
     });
+
+    const parentTapSpec = buildTapInteractionSpec(
+      parentNode,
+      parent,
+      "tree-tap:parent:" + family.id
+    );
+
+    if (parentTapSpec) {
+      pushNode(parentTapSpec.tapNode);
+      graph.edges.push(...parentTapSpec.edges);
+    }
 
     members.forEach((member, memberIndex) => {
       const roleLaneOffset = member.role === "extended_child"
@@ -516,18 +623,21 @@ function buildTreeGraph(families) {
           ? 20
           : 0;
       const childX = clusterX + memberIndex * (childWidth + childGap);
-      const childId = "tree-member-" + familyIndex + "-" + memberIndex;
+      const childId = "tree-member:" + (member.id || family.id + ":" + memberIndex);
 
-      pushNode({
+      const childNode = pushNode({
         id: childId,
         kind: "child",
         role: member.role,
         chapter: member.chapterCode,
         title: member.symbol + " " + member.timeframe,
         subtitle: roleLabel(member.role) + " · " + member.state + " · " + humanize(member.direction),
+        state: member.state,
         x: childX + roleXOffset,
         y: rowY.child + roleLaneOffset,
-        width: childWidth
+        width: childWidth,
+        createdAt: member.anchorTime || member.timestamp || null,
+        updatedAt: member.updatedAt || null
       });
 
       graph.edges.push({
@@ -535,6 +645,17 @@ function buildTreeGraph(families) {
         to: childId,
         role: member.role
       });
+
+      const memberTapSpec = buildTapInteractionSpec(
+        childNode,
+        member,
+        "tree-tap:member:" + (member.id || family.id + ":" + memberIndex)
+      );
+
+      if (memberTapSpec) {
+        pushNode(memberTapSpec.tapNode);
+        graph.edges.push(...memberTapSpec.edges);
+      }
     });
 
     familyCursor += clusterWidth + familyGap;
@@ -545,18 +666,32 @@ function buildTreeGraph(families) {
     .flatMap((family) => family.members || []);
 
   looseMembers.forEach((member, index) => {
-    const orphanId = "tree-orphan-" + index;
-    pushNode({
+    const orphanId = "tree-orphan:" + (member.id || index);
+    const orphanNode = pushNode({
       id: orphanId,
       kind: "orphan",
       role: member.role || "orphan",
       chapter: member.chapterCode,
       title: member.symbol + " " + member.timeframe,
       subtitle: roleLabel(member.role || "orphan") + " · " + member.state + " · " + humanize(member.direction),
+      state: member.state,
       x: orphanCursor,
       y: rowY.orphan + (index % 2) * 34,
-      width: childWidth
+      width: childWidth,
+      createdAt: member.anchorTime || member.timestamp || null,
+      updatedAt: member.updatedAt || null
     });
+
+    const orphanTapSpec = buildTapInteractionSpec(
+      orphanNode,
+      member,
+      "tree-tap:orphan:" + (member.id || index)
+    );
+
+    if (orphanTapSpec) {
+      pushNode(orphanTapSpec.tapNode);
+      graph.edges.push(...orphanTapSpec.edges);
+    }
     orphanCursor += childWidth + childGap;
   });
 
@@ -572,6 +707,10 @@ function renderTreeWorkspace(families) {
   const graph = buildTreeGraph(families);
   const nodesHtml = graph.nodes.map(renderTreeGraphNode).join("");
   const edgesHtml = graph.edges.map((edge) => {
+    if (edge.edgeType === "tap") {
+      return "<path class=\"tree-edge tree-edge-tap\" data-edge-type=\"tap\" data-from=\"" + escapeHtml(edge.from) + "\" data-to=\"" + escapeHtml(edge.to) + "\" data-tap-index=\"" + escapeHtml(String(edge.tapIndex || 0)) + "\" data-tap-total=\"" + escapeHtml(String(edge.tapTotal || 1)) + "\" style=\"opacity:" + escapeHtml(String(edge.opacity ?? 1)) + ";\"></path>";
+    }
+
     return "<line class=\"tree-edge role-" + escapeHtml(roleClass(edge.role)) + "\" data-from=\"" + escapeHtml(edge.from) + "\" data-to=\"" + escapeHtml(edge.to) + "\"></line>";
   }).join("");
 
@@ -606,7 +745,22 @@ function applyTreeViewportTransform() {
   canvas.style.transform = `translate(${treeViewportState.x}px, ${treeViewportState.y}px) scale(${treeViewportState.scale})`;
 }
 
-function saveTreeNodeLayout() {
+async function saveTreeNodeLayout() {
+  const res = await fetch(TREE_LAYOUT_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      nodeOffsets: treeViewportState.nodeOffsets
+    })
+  });
+  const data = await res.json();
+
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "Failed to save tree layout.");
+  }
+
+  treeViewportState.nodeOffsets = data.nodeOffsets || {};
+  treeViewportState.layoutUpdatedAt = data.updatedAt || null;
   localStorage.setItem(TREE_NODE_LAYOUT_KEY, JSON.stringify(treeViewportState.nodeOffsets));
   treeViewportState.layoutDirty = false;
 }
@@ -657,11 +811,38 @@ function updateTreeEdges() {
     line.setAttribute("x2", String(toX));
     line.setAttribute("y2", String(toY));
   });
+
+  svg.querySelectorAll('path[data-edge-type="tap"][data-from][data-to]').forEach((path) => {
+    const from = document.getElementById(path.dataset.from);
+    const to = document.getElementById(path.dataset.to);
+    if (!from || !to) return;
+
+    const fromX = from.offsetLeft + from.offsetWidth / 2;
+    const fromY = from.offsetTop + from.offsetHeight;
+    const toX = to.offsetLeft + to.offsetWidth / 2;
+    const toY = to.offsetTop;
+    const tapTotal = Number(path.dataset.tapTotal) || 1;
+    const tapIndex = Number(path.dataset.tapIndex) || 0;
+    const center = (tapTotal - 1) / 2;
+    const fanOffset = (tapIndex - center) * 22;
+    const control1X = fromX + fanOffset;
+    const control1Y = fromY + 48;
+    const control2X = toX + fanOffset;
+    const control2Y = Math.max(fromY + 72, toY - 34);
+
+    path.setAttribute(
+      "d",
+      `M ${fromX} ${fromY} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${toX} ${toY}`
+    );
+  });
 }
 
 function treeNodeBand(kind) {
   if (kind === "granddad") {
     return { min: 24, max: 132 };
+  }
+  if (kind === "tap") {
+    return { min: 148, max: 340 };
   }
   if (kind === "parent") {
     return { min: 148, max: 308 };
@@ -670,6 +851,46 @@ function treeNodeBand(kind) {
     return { min: 648, max: 900 };
   }
   return { min: 380, max: 620 };
+}
+
+function getTreeDragTargets(nodeId, nodeKind) {
+  const targets = [];
+  const seen = new Set();
+
+  function addTarget(id, kind) {
+    if (!id || seen.has(id)) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    const current = treeViewportState.nodeOffsets[id] || { x: 0, y: 0 };
+    targets.push({
+      id,
+      kind,
+      element: el,
+      initialOffsetX: Number(current.x) || 0,
+      initialOffsetY: Number(current.y) || 0
+    });
+    seen.add(id);
+  }
+
+  addTarget(nodeId, nodeKind);
+
+  if (nodeKind === "parent") {
+    const descendantIds = new Set([nodeId]);
+
+    document.querySelectorAll(`#tree-map-svg line[data-from="${CSS.escape(nodeId)}"]`).forEach((line) => {
+      addTarget(line.dataset.to, "child");
+      descendantIds.add(line.dataset.to);
+    });
+
+    document.querySelectorAll(`#tree-map-svg path[data-edge-type="tap"]`).forEach((path) => {
+      if (descendantIds.has(path.dataset.to)) {
+        addTarget(path.dataset.from, "tap");
+      }
+    });
+  }
+
+  return targets;
 }
 
 function setupTreeNodeDragging(viewport) {
@@ -686,6 +907,10 @@ function setupTreeNodeDragging(viewport) {
       const current = treeViewportState.nodeOffsets[nodeEl.dataset.nodeId] || { x: 0, y: 0 };
       treeViewportState.nodeDragInitialOffsetX = Number(current.x) || 0;
       treeViewportState.nodeDragInitialOffsetY = Number(current.y) || 0;
+      treeViewportState.nodeDragTargets = getTreeDragTargets(
+        nodeEl.dataset.nodeId,
+        nodeEl.dataset.nodeKind
+      );
     };
 
     nodeEl.onpointermove = (event) => {
@@ -695,27 +920,35 @@ function setupTreeNodeDragging(viewport) {
       const canvas = document.getElementById("tree-map-canvas");
       if (!canvas) return;
 
-      const baseLeft = parseFloat(nodeEl.style.left) - (treeViewportState.nodeOffsets[nodeEl.dataset.nodeId]?.x || 0);
-      const baseTop = parseFloat(nodeEl.style.top) - (treeViewportState.nodeOffsets[nodeEl.dataset.nodeId]?.y || 0);
       const dx = (event.clientX - treeViewportState.nodeDragStartX) / treeViewportState.scale;
       const dy = (event.clientY - treeViewportState.nodeDragStartY) / treeViewportState.scale;
-      const band = treeNodeBand(nodeEl.dataset.nodeKind);
-      const nextOffsetX = treeViewportState.nodeDragInitialOffsetX + dx;
-      const nextOffsetY = treeViewportState.nodeDragInitialOffsetY + dy;
-      const unclampedLeft = baseLeft + nextOffsetX;
-      const unclampedTop = baseTop + nextOffsetY;
-      const maxLeft = Math.max(16, canvas.offsetWidth - nodeEl.offsetWidth - 16);
-      const maxTop = Math.max(band.min, band.max - nodeEl.offsetHeight);
-      const nextLeft = Math.max(16, Math.min(maxLeft, unclampedLeft));
-      const nextTop = Math.max(band.min, Math.min(maxTop, unclampedTop));
 
-      treeViewportState.nodeOffsets[nodeEl.dataset.nodeId] = {
-        x: Math.round(nextLeft - baseLeft),
-        y: Math.round(nextTop - baseTop)
-      };
+      (treeViewportState.nodeDragTargets || []).forEach((target) => {
+        const targetEl = target.element;
+        if (!targetEl) return;
+
+        const currentOffset = treeViewportState.nodeOffsets[target.id] || { x: 0, y: 0 };
+        const baseLeft = parseFloat(targetEl.style.left) - (currentOffset.x || 0);
+        const baseTop = parseFloat(targetEl.style.top) - (currentOffset.y || 0);
+        const band = treeNodeBand(target.kind);
+        const nextOffsetX = target.initialOffsetX + dx;
+        const nextOffsetY = target.initialOffsetY + dy;
+        const unclampedLeft = baseLeft + nextOffsetX;
+        const unclampedTop = baseTop + nextOffsetY;
+        const maxLeft = Math.max(16, canvas.offsetWidth - targetEl.offsetWidth - 16);
+        const maxTop = Math.max(band.min, band.max - targetEl.offsetHeight);
+        const nextLeft = Math.max(16, Math.min(maxLeft, unclampedLeft));
+        const nextTop = Math.max(band.min, Math.min(maxTop, unclampedTop));
+
+        treeViewportState.nodeOffsets[target.id] = {
+          x: Math.round(nextLeft - baseLeft),
+          y: Math.round(nextTop - baseTop)
+        };
+        targetEl.style.left = `${nextLeft}px`;
+        targetEl.style.top = `${nextTop}px`;
+      });
+
       treeViewportState.layoutDirty = true;
-      nodeEl.style.left = `${nextLeft}px`;
-      nodeEl.style.top = `${nextTop}px`;
       updateTreeEdges();
     };
 
@@ -726,6 +959,7 @@ function setupTreeNodeDragging(viewport) {
       treeViewportState.nodeDragId = null;
       treeViewportState.nodeDragKind = null;
       treeViewportState.nodeDragPointerId = null;
+      treeViewportState.nodeDragTargets = [];
     };
 
     nodeEl.onpointerup = finishDrag;
@@ -878,12 +1112,28 @@ function setupTreeViewport() {
       }
 
       if (action === "save") {
-        saveTreeNodeLayout();
+        if (treeViewportState.saving) return;
+
         const originalText = button.textContent;
-        button.textContent = "Saved";
-        window.setTimeout(() => {
-          button.textContent = originalText;
-        }, 900);
+        treeViewportState.saving = true;
+        button.textContent = "Saving";
+        saveTreeNodeLayout()
+          .then(() => {
+            button.textContent = "Saved";
+            window.setTimeout(() => {
+              button.textContent = originalText;
+            }, 900);
+          })
+          .catch((error) => {
+            console.error("Failed to save tree layout:", error);
+            button.textContent = "Failed";
+            window.setTimeout(() => {
+              button.textContent = originalText;
+            }, 1100);
+          })
+          .finally(() => {
+            treeViewportState.saving = false;
+          });
         return;
       }
 
@@ -1070,6 +1320,19 @@ async function loadHistoryClues() {
   appState.clues = data.items || [];
 }
 
+async function loadTreeLayout() {
+  const res = await fetch(TREE_LAYOUT_API);
+  const data = await res.json();
+
+  if (treeViewportState.layoutDirty || treeViewportState.nodeDragId) {
+    return;
+  }
+
+  treeViewportState.nodeOffsets = data.nodeOffsets || {};
+  treeViewportState.layoutUpdatedAt = data.updatedAt || null;
+  localStorage.setItem(TREE_NODE_LAYOUT_KEY, JSON.stringify(treeViewportState.nodeOffsets));
+}
+
 async function loadAll() {
   try {
     await Promise.all([loadState(), loadRawEvents(), loadHistoryClues()]);
@@ -1197,6 +1460,8 @@ setupHistoryForm();
 setupArchiveResetControl();
 setupTeachingForm();
 updateClock();
-loadAll();
+Promise.all([loadTreeLayout(), loadAll()]).catch((error) => {
+  console.error("Initial load failed:", error);
+});
 setInterval(updateClock, 1000);
 setInterval(loadAll, 3000);

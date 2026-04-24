@@ -8,6 +8,7 @@ const state = require("./src/state");
 const logic = require("./src/logic");
 const ARCHIVE_RESET_PIN = "1234";
 const HISTORY_CLUES_FILE = path.join(__dirname, "data", "history-clues.json");
+const TREE_LAYOUT_FILE = path.join(__dirname, "data", "tree-layout.json");
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
@@ -29,6 +30,46 @@ function readHistoryClues() {
 function writeHistoryClues(items) {
   fs.mkdirSync(path.dirname(HISTORY_CLUES_FILE), { recursive: true });
   fs.writeFileSync(HISTORY_CLUES_FILE, JSON.stringify(items, null, 2));
+}
+
+function readTreeLayout() {
+  try {
+    if (!fs.existsSync(TREE_LAYOUT_FILE)) {
+      return { nodeOffsets: {}, updatedAt: null };
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(TREE_LAYOUT_FILE, "utf8"));
+    return {
+      nodeOffsets:
+        parsed && typeof parsed.nodeOffsets === "object" && !Array.isArray(parsed.nodeOffsets)
+          ? parsed.nodeOffsets
+          : {},
+      updatedAt: parsed?.updatedAt || null
+    };
+  } catch (error) {
+    console.error("[TREE LAYOUT READ ERROR]", error.message);
+    return { nodeOffsets: {}, updatedAt: null };
+  }
+}
+
+function writeTreeLayout(nodeOffsets) {
+  const safeOffsets =
+    nodeOffsets && typeof nodeOffsets === "object" && !Array.isArray(nodeOffsets)
+      ? nodeOffsets
+      : {};
+
+  fs.mkdirSync(path.dirname(TREE_LAYOUT_FILE), { recursive: true });
+  fs.writeFileSync(
+    TREE_LAYOUT_FILE,
+    JSON.stringify(
+      {
+        nodeOffsets: safeOffsets,
+        updatedAt: new Date().toISOString()
+      },
+      null,
+      2
+    )
+  );
 }
 
 
@@ -942,6 +983,30 @@ app.get("/api/history-clues", (req, res) => {
     count: items.length,
     items
   });
+});
+
+app.get("/api/tree-layout", (req, res) => {
+  res.json({
+    ok: true,
+    ...readTreeLayout()
+  });
+});
+
+app.post("/api/tree-layout", (req, res) => {
+  try {
+    writeTreeLayout(req.body?.nodeOffsets || {});
+
+    res.json({
+      ok: true,
+      ...readTreeLayout()
+    });
+  } catch (error) {
+    console.error("[TREE LAYOUT WRITE ERROR]", error.message);
+    res.status(500).json({
+      ok: false,
+      error: "Failed to save tree layout."
+    });
+  }
 });
 
 app.post("/api/history-clues", (req, res) => {

@@ -300,6 +300,12 @@ textarea {
 
 .story-card {
   padding: 16px;
+  background: var(--readiness-bg, var(--panel));
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px var(--state-outline),
+    0 0 22px color-mix(in srgb, var(--readiness-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--readiness-accent) 34%, var(--line));
 }
 
 .story-card-head,
@@ -312,7 +318,7 @@ textarea {
 
 .chapter-code {
   margin-bottom: 5px;
-  color: var(--cyan);
+  color: var(--readiness-accent);
   font-size: 0.8rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -329,24 +335,6 @@ textarea {
   background: var(--panel-strong);
   font-size: 0.74rem;
   white-space: nowrap;
-}
-
-.role-parent .role-pill {
-  border-color: rgba(98, 195, 223, 0.7);
-}
-
-.role-child .role-pill,
-.role-close-child .role-pill {
-  border-color: rgba(107, 211, 148, 0.78);
-}
-
-.role-extended-child .role-pill,
-.role-unattached .role-pill {
-  border-color: rgba(242, 184, 75, 0.78);
-}
-
-.role-orphan .role-pill {
-  border-color: rgba(210, 132, 84, 0.78);
 }
 
 .story-name {
@@ -652,8 +640,11 @@ body.view-tablet .history-layout {
 .tree-family {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--panel-soft);
+  background: var(--chapter-bg, var(--panel-soft));
   overflow: hidden;
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px var(--state-outline);
 }
 
 .family-card details {
@@ -684,6 +675,12 @@ body.view-tablet .history-layout {
 .family-member p {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.tree-node-meta {
+  font-size: 0.75rem;
+  color: rgba(191, 205, 224, 0.62);
+  line-height: 1.35;
 }
 
 .family-medium {
@@ -729,26 +726,22 @@ body.view-tablet .history-layout {
   gap: 12px;
   padding: 12px;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--line-strong);
+  border-left: 3px solid var(--readiness-accent);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--readiness-bg);
+  box-shadow:
+    0 0 0 1px var(--state-outline),
+    0 0 18px color-mix(in srgb, var(--readiness-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--readiness-accent) 28%, var(--line));
 }
 
-.family-member.role-parent,
-.tree-node.role-parent {
-  border-left-color: var(--cyan);
-}
-
-.family-member.role-close-child,
-.family-member.role-child,
-.tree-node.role-close-child,
-.tree-node.role-child {
-  border-left-color: var(--green);
-}
-
-.family-member.role-extended-child,
-.tree-node.role-extended-child {
-  border-left-color: var(--accent);
+.story-card,
+.family-card,
+.family-member,
+.tree-node {
+  --readiness-accent: var(--cyan);
+  --readiness-bg: rgba(98, 195, 223, 0.05);
+  --state-outline: transparent;
 }
 
 .family-map-tree {
@@ -762,9 +755,14 @@ body.view-tablet .history-layout {
   align-items: flex-start;
   padding: 12px;
   border: 1px solid var(--line);
-  border-left: 3px solid var(--line-strong);
+  border-left: 3px solid var(--readiness-accent);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--readiness-bg);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.18),
+    0 0 0 1px var(--state-outline),
+    0 0 20px color-mix(in srgb, var(--readiness-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--readiness-accent) 32%, var(--line));
 }
 
 .tree-node.role-conflict-child,
@@ -783,11 +781,11 @@ body.view-tablet .history-layout {
   justify-content: center;
   width: 34px;
   min-height: 34px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid color-mix(in srgb, var(--readiness-accent) 52%, var(--line-strong));
   border-radius: 8px;
-  color: var(--cyan);
+  color: var(--readiness-accent);
   font-weight: 900;
-  background: var(--panel-strong);
+  background: color-mix(in srgb, var(--readiness-accent) 10%, var(--panel-strong));
 }
 
 .tree-map-shell {
@@ -876,6 +874,14 @@ body.view-tablet .history-layout {
   stroke-dasharray: 7 5;
 }
 
+.tree-edge-tap {
+  stroke: rgba(94, 240, 143, 0.9);
+  stroke-width: 2.6;
+  stroke-dasharray: 10 6;
+  fill: none;
+  filter: drop-shadow(0 0 5px rgba(94, 240, 143, 0.26));
+}
+
 .tree-row-label {
   position: absolute;
   left: 24px;
@@ -919,30 +925,137 @@ body.view-tablet .history-layout {
 
 .tree-node-kind-granddad {
   opacity: 0.82;
-  border-left-color: rgba(98, 195, 223, 0.4);
-  background: rgba(98, 195, 223, 0.03);
+  border-left-color: color-mix(in srgb, var(--readiness-accent) 44%, var(--line));
+  background: color-mix(in srgb, var(--readiness-bg) 76%, rgba(255, 255, 255, 0.02));
 }
 
 .tree-node-kind-parent {
-  background: rgba(98, 195, 223, 0.06);
+  background: color-mix(in srgb, var(--readiness-bg) 88%, rgba(255, 255, 255, 0.018));
+}
+
+.tree-node-kind-tap {
+  background: color-mix(in srgb, var(--readiness-bg) 92%, rgba(255, 255, 255, 0.02));
+  border-style: dashed;
 }
 
 .tree-node-kind-orphan {
   border-style: dashed;
-  background: rgba(98, 195, 223, 0.02);
+  background: color-mix(in srgb, var(--readiness-bg) 65%, rgba(255, 255, 255, 0.014));
 }
 
 .tree-node-kind-child.role-conflict-child {
-  background: rgba(135, 147, 165, 0.06);
+  background: color-mix(in srgb, var(--readiness-bg) 72%, rgba(135, 147, 165, 0.08));
 }
 
 .tree-node-kind-child.role-extended-child {
-  background: rgba(242, 184, 75, 0.045);
+  background: color-mix(in srgb, var(--readiness-bg) 82%, rgba(242, 184, 75, 0.06));
 }
 
 .tree-node-kind-child.role-close-child,
 .tree-node-kind-child.role-child {
-  background: rgba(119, 227, 163, 0.04);
+  background: color-mix(in srgb, var(--readiness-bg) 86%, rgba(119, 227, 163, 0.04));
+}
+
+.story-card.readiness-monitoring,
+.family-card.readiness-monitoring,
+.family-member.readiness-monitoring,
+.tree-node.readiness-monitoring {
+  --readiness-accent: #6ed3ff;
+  --readiness-bg: rgba(66, 160, 215, 0.09);
+  --state-outline: rgba(110, 211, 255, 0.36);
+}
+
+.story-card.readiness-attention,
+.family-card.readiness-attention,
+.family-member.readiness-attention,
+.tree-node.readiness-attention {
+  --readiness-accent: #ffb14a;
+  --readiness-bg: rgba(255, 166, 53, 0.12);
+  --state-outline: rgba(255, 177, 74, 0.46);
+}
+
+.story-card.readiness-actionable,
+.family-card.readiness-actionable,
+.family-member.readiness-actionable,
+.tree-node.readiness-actionable {
+  --readiness-accent: #5ef08f;
+  --readiness-bg: rgba(66, 208, 113, 0.13);
+  --state-outline: rgba(94, 240, 143, 0.52);
+}
+
+.story-card.readiness-monitoring .chapter-code,
+.family-card.readiness-monitoring .chapter-code,
+.family-member.readiness-monitoring strong,
+.tree-node.readiness-monitoring strong {
+  color: #cfefff;
+}
+
+.story-card.readiness-attention .chapter-code,
+.family-card.readiness-attention .chapter-code,
+.family-member.readiness-attention strong,
+.tree-node.readiness-attention strong {
+  color: #ffe2b7;
+}
+
+.story-card.readiness-actionable .chapter-code,
+.family-card.readiness-actionable .chapter-code,
+.family-member.readiness-actionable strong,
+.tree-node.readiness-actionable strong {
+  color: #d8ffe7;
+}
+
+.story-card.readiness-monitoring .role-pill,
+.family-card.readiness-monitoring .role-pill,
+.family-member.readiness-monitoring .role-pill {
+  border-color: rgba(110, 211, 255, 0.48);
+  background: rgba(110, 211, 255, 0.08);
+}
+
+.story-card.readiness-attention .role-pill,
+.family-card.readiness-attention .role-pill,
+.family-member.readiness-attention .role-pill {
+  border-color: rgba(255, 177, 74, 0.52);
+  background: rgba(255, 177, 74, 0.1);
+}
+
+.story-card.readiness-actionable .role-pill,
+.family-card.readiness-actionable .role-pill,
+.family-member.readiness-actionable .role-pill {
+  border-color: rgba(94, 240, 143, 0.54);
+  background: rgba(94, 240, 143, 0.1);
+}
+
+.tree-node.readiness-monitoring .node-chapter {
+  border-color: rgba(110, 211, 255, 0.54);
+  background: rgba(110, 211, 255, 0.12);
+  color: #6ed3ff;
+}
+
+.tree-node.readiness-attention .node-chapter {
+  border-color: rgba(255, 177, 74, 0.62);
+  background: rgba(255, 177, 74, 0.14);
+  color: #ffb14a;
+}
+
+.tree-node.readiness-actionable .node-chapter {
+  border-color: rgba(94, 240, 143, 0.68);
+  background: rgba(94, 240, 143, 0.16);
+  color: #5ef08f;
+}
+
+.tree-node.readiness-monitoring .tree-node-meta,
+.story-card.readiness-monitoring .story-name {
+  color: rgba(207, 239, 255, 0.78);
+}
+
+.tree-node.readiness-attention .tree-node-meta,
+.story-card.readiness-attention .story-name {
+  color: rgba(255, 226, 183, 0.8);
+}
+
+.tree-node.readiness-actionable .tree-node-meta,
+.story-card.readiness-actionable .story-name {
+  color: rgba(216, 255, 231, 0.82);
 }
 
 @media (max-width: 1180px) {
