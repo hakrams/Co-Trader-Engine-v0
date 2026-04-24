@@ -2,6 +2,7 @@ const VIEW_MODE_KEY = "coTraderV2ViewMode";
 const TEACHING_NOTES_KEY = "coTraderV2TeachingNotes";
 const TFC_VIEW_KEY = "coTraderV2TfcView";
 const TFC_COLLAPSE_KEY = "coTraderV2TfcCollapsed";
+const TREE_NODE_LAYOUT_KEY = "coTraderV2TreeNodeLayout";
 
 let appState = {
   engine: null,
@@ -14,6 +15,15 @@ const treeViewportState = {
   x: 48,
   y: 32,
   scale: 1,
+  autoFitted: false,
+  nodeOffsets: JSON.parse(localStorage.getItem(TREE_NODE_LAYOUT_KEY) || "{}"),
+  nodeDragId: null,
+  nodeDragKind: null,
+  nodeDragPointerId: null,
+  nodeDragStartX: 0,
+  nodeDragStartY: 0,
+  nodeDragInitialOffsetX: 0,
+  nodeDragInitialOffsetY: 0,
   pointers: new Map(),
   pinchDistance: null,
   pinchScale: 1,
@@ -401,7 +411,7 @@ function renderFamilyTree(family) {
 }
 
 function renderTreeGraphNode(node) {
-  return "<article id=\"" + escapeHtml(node.id) + "\" class=\"tree-graph-node tree-node role-" + escapeHtml(roleClass(node.role)) + " tree-node-kind-" + escapeHtml(node.kind) + "\" style=\"left:" + escapeHtml(String(node.x)) + "px;top:" + escapeHtml(String(node.y)) + "px;width:" + escapeHtml(String(node.width)) + "px;\">" +
+  return "<article id=\"" + escapeHtml(node.id) + "\" data-node-id=\"" + escapeHtml(node.id) + "\" data-node-kind=\"" + escapeHtml(node.kind) + "\" class=\"tree-graph-node tree-node role-" + escapeHtml(roleClass(node.role)) + " tree-node-kind-" + escapeHtml(node.kind) + "\" style=\"left:" + escapeHtml(String(node.x)) + "px;top:" + escapeHtml(String(node.y)) + "px;width:" + escapeHtml(String(node.width)) + "px;\">" +
     "<span class=\"node-chapter\">" + escapeHtml(node.chapter) + "</span>" +
     "<div><strong>" + escapeHtml(node.title) + "</strong><p>" + escapeHtml(node.subtitle) + "</p></div></article>";
 }
@@ -411,7 +421,13 @@ function buildTreeGraph(families) {
     nodes: [],
     edges: [],
     width: 1600,
-    height: 860
+    height: 860,
+    bounds: {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: 0,
+      maxY: 0
+    }
   };
   const parentWidth = 430;
   const childWidth = 280;
@@ -422,19 +438,33 @@ function buildTreeGraph(families) {
     child: 418,
     orphan: 682
   };
-  const familyGap = 120;
-  const childGap = 28;
-  let familyCursor = 80;
-  let orphanCursor = 140;
+  const familyGap = 180;
+  const childGap = 34;
+  let familyCursor = 240;
+  let orphanCursor = 160;
 
-  graph.nodes.push({
+  function pushNode(node) {
+    const offset = treeViewportState.nodeOffsets[node.id];
+    if (offset) {
+      node.x += Number(offset.x) || 0;
+      node.y += Number(offset.y) || 0;
+    }
+
+    graph.nodes.push(node);
+    graph.bounds.minX = Math.min(graph.bounds.minX, node.x);
+    graph.bounds.minY = Math.min(graph.bounds.minY, node.y);
+    graph.bounds.maxX = Math.max(graph.bounds.maxX, node.x + node.width);
+    graph.bounds.maxY = Math.max(graph.bounds.maxY, node.y + 86);
+  }
+
+  pushNode({
     id: "granddad-placeholder",
     kind: "granddad",
     role: "granddad",
     chapter: "?",
     title: "Granddad Layer",
     subtitle: "future higher context placeholder",
-    x: 640,
+    x: 720,
     y: rowY.granddad,
     width: granddadWidth
   });
@@ -451,12 +481,14 @@ function buildTreeGraph(families) {
       return (rank[a.role] ?? 3) - (rank[b.role] ?? 3);
     });
 
-    const clusterWidth = Math.max(parentWidth, members.length * childWidth + Math.max(0, members.length - 1) * childGap);
-    const clusterX = familyCursor;
-    const parentX = clusterX + (clusterWidth - parentWidth) / 2;
+    const memberCount = Math.max(1, members.length);
+    const childSpan = memberCount * childWidth + Math.max(0, memberCount - 1) * childGap;
+    const clusterWidth = Math.max(parentWidth + 120, childSpan + 80);
+    const parentX = familyCursor;
+    const clusterX = parentX + (parentWidth - childSpan) / 2;
     const parentId = "tree-parent-" + familyIndex;
 
-    graph.nodes.push({
+    pushNode({
       id: parentId,
       kind: "parent",
       role: "parent",
@@ -470,21 +502,26 @@ function buildTreeGraph(families) {
 
     members.forEach((member, memberIndex) => {
       const roleLaneOffset = member.role === "extended_child"
-        ? 36
+        ? 40
         : member.role === "conflict_child"
-          ? 72
+          ? 84
+          : 0;
+      const roleXOffset = member.role === "extended_child"
+        ? 8
+        : member.role === "conflict_child"
+          ? 20
           : 0;
       const childX = clusterX + memberIndex * (childWidth + childGap);
       const childId = "tree-member-" + familyIndex + "-" + memberIndex;
 
-      graph.nodes.push({
+      pushNode({
         id: childId,
         kind: "child",
         role: member.role,
         chapter: member.chapterCode,
         title: member.symbol + " " + member.timeframe,
         subtitle: roleLabel(member.role) + " · " + member.state + " · " + humanize(member.direction),
-        x: childX,
+        x: childX + roleXOffset,
         y: rowY.child + roleLaneOffset,
         width: childWidth
       });
@@ -505,7 +542,7 @@ function buildTreeGraph(families) {
 
   looseMembers.forEach((member, index) => {
     const orphanId = "tree-orphan-" + index;
-    graph.nodes.push({
+    pushNode({
       id: orphanId,
       kind: "orphan",
       role: member.role || "orphan",
@@ -513,14 +550,17 @@ function buildTreeGraph(families) {
       title: member.symbol + " " + member.timeframe,
       subtitle: roleLabel(member.role || "orphan") + " · " + member.state + " · " + humanize(member.direction),
       x: orphanCursor,
-      y: rowY.orphan + (index % 2) * 26,
+      y: rowY.orphan + (index % 2) * 34,
       width: childWidth
     });
     orphanCursor += childWidth + childGap;
   });
 
-  graph.width = Math.max(graph.width, familyCursor + 160, orphanCursor + 160);
-  graph.height = looseMembers.length ? 1020 : 780;
+  const bounds = graph.bounds;
+  if (Number.isFinite(bounds.minX)) {
+    graph.width = Math.max(graph.width, bounds.maxX + 220);
+    graph.height = Math.max(looseMembers.length ? 1020 : 780, bounds.maxY + 180);
+  }
   return graph;
 }
 
@@ -560,11 +600,130 @@ function applyTreeViewportTransform() {
   canvas.style.transform = `translate(${treeViewportState.x}px, ${treeViewportState.y}px) scale(${treeViewportState.scale})`;
 }
 
-function resetTreeViewport() {
-  treeViewportState.x = 48;
-  treeViewportState.y = 32;
-  treeViewportState.scale = 1;
+function saveTreeNodeLayout() {
+  localStorage.setItem(TREE_NODE_LAYOUT_KEY, JSON.stringify(treeViewportState.nodeOffsets));
+}
+
+function fitTreeViewport(preserveScale = false) {
+  const viewport = document.getElementById("tree-map-viewport");
+  const canvas = document.getElementById("tree-map-canvas");
+  if (!viewport || !canvas) return;
+
+  const viewportWidth = viewport.clientWidth || 1;
+  const viewportHeight = viewport.clientHeight || 1;
+  const canvasWidth = canvas.offsetWidth || 1;
+  const canvasHeight = canvas.offsetHeight || 1;
+  const padding = 72;
+
+  if (!preserveScale) {
+    const scaleX = (viewportWidth - padding * 2) / canvasWidth;
+    const scaleY = (viewportHeight - padding * 2) / canvasHeight;
+    treeViewportState.scale = clampTreeScale(Math.min(scaleX, scaleY, 1));
+  }
+
+  treeViewportState.x = (viewportWidth - canvasWidth * treeViewportState.scale) / 2;
+  treeViewportState.y = Math.max(28, (viewportHeight - canvasHeight * treeViewportState.scale) / 2);
   applyTreeViewportTransform();
+}
+
+function resetTreeViewport() {
+  treeViewportState.scale = 1;
+  fitTreeViewport(false);
+}
+
+function updateTreeEdges() {
+  const svg = document.getElementById("tree-map-svg");
+  if (!svg) return;
+
+  svg.querySelectorAll("line[data-from][data-to]").forEach((line) => {
+    const from = document.getElementById(line.dataset.from);
+    const to = document.getElementById(line.dataset.to);
+    if (!from || !to) return;
+
+    const fromX = from.offsetLeft + from.offsetWidth / 2;
+    const fromY = from.offsetTop + from.offsetHeight;
+    const toX = to.offsetLeft + to.offsetWidth / 2;
+    const toY = to.offsetTop;
+
+    line.setAttribute("x1", String(fromX));
+    line.setAttribute("y1", String(fromY));
+    line.setAttribute("x2", String(toX));
+    line.setAttribute("y2", String(toY));
+  });
+}
+
+function treeNodeBand(kind) {
+  if (kind === "granddad") {
+    return { min: 24, max: 132 };
+  }
+  if (kind === "parent") {
+    return { min: 148, max: 308 };
+  }
+  if (kind === "orphan") {
+    return { min: 648, max: 900 };
+  }
+  return { min: 380, max: 620 };
+}
+
+function setupTreeNodeDragging(viewport) {
+  viewport.querySelectorAll("[data-node-id]").forEach((nodeEl) => {
+    nodeEl.onpointerdown = (event) => {
+      event.stopPropagation();
+      nodeEl.setPointerCapture(event.pointerId);
+      treeViewportState.nodeDragId = nodeEl.dataset.nodeId;
+      treeViewportState.nodeDragKind = nodeEl.dataset.nodeKind;
+      treeViewportState.nodeDragPointerId = event.pointerId;
+      treeViewportState.nodeDragStartX = event.clientX;
+      treeViewportState.nodeDragStartY = event.clientY;
+      const current = treeViewportState.nodeOffsets[nodeEl.dataset.nodeId] || { x: 0, y: 0 };
+      treeViewportState.nodeDragInitialOffsetX = Number(current.x) || 0;
+      treeViewportState.nodeDragInitialOffsetY = Number(current.y) || 0;
+    };
+
+    nodeEl.onpointermove = (event) => {
+      if (treeViewportState.nodeDragId !== nodeEl.dataset.nodeId) return;
+      if (treeViewportState.nodeDragPointerId !== event.pointerId) return;
+
+      const canvas = document.getElementById("tree-map-canvas");
+      if (!canvas) return;
+
+      const baseLeft = parseFloat(nodeEl.style.left) - (treeViewportState.nodeOffsets[nodeEl.dataset.nodeId]?.x || 0);
+      const baseTop = parseFloat(nodeEl.style.top) - (treeViewportState.nodeOffsets[nodeEl.dataset.nodeId]?.y || 0);
+      const dx = (event.clientX - treeViewportState.nodeDragStartX) / treeViewportState.scale;
+      const dy = (event.clientY - treeViewportState.nodeDragStartY) / treeViewportState.scale;
+      const band = treeNodeBand(nodeEl.dataset.nodeKind);
+      const nextOffsetX = treeViewportState.nodeDragInitialOffsetX + dx;
+      const nextOffsetY = treeViewportState.nodeDragInitialOffsetY + dy;
+      const unclampedLeft = baseLeft + nextOffsetX;
+      const unclampedTop = baseTop + nextOffsetY;
+      const maxLeft = Math.max(16, canvas.offsetWidth - nodeEl.offsetWidth - 16);
+      const maxTop = Math.max(band.min, band.max - nodeEl.offsetHeight);
+      const nextLeft = Math.max(16, Math.min(maxLeft, unclampedLeft));
+      const nextTop = Math.max(band.min, Math.min(maxTop, unclampedTop));
+
+      treeViewportState.nodeOffsets[nodeEl.dataset.nodeId] = {
+        x: Math.round(nextLeft - baseLeft),
+        y: Math.round(nextTop - baseTop)
+      };
+      nodeEl.style.left = `${nextLeft}px`;
+      nodeEl.style.top = `${nextTop}px`;
+      updateTreeEdges();
+    };
+
+    const finishDrag = (event) => {
+      if (treeViewportState.nodeDragId !== nodeEl.dataset.nodeId) return;
+      if (event && treeViewportState.nodeDragPointerId !== event.pointerId) return;
+
+      saveTreeNodeLayout();
+      treeViewportState.nodeDragId = null;
+      treeViewportState.nodeDragKind = null;
+      treeViewportState.nodeDragPointerId = null;
+    };
+
+    nodeEl.onpointerup = finishDrag;
+    nodeEl.onpointercancel = finishDrag;
+    nodeEl.onlostpointercapture = finishDrag;
+  });
 }
 
 function getPointerDistance(points) {
@@ -597,26 +756,15 @@ function setupTreeViewport() {
   const canvas = document.getElementById("tree-map-canvas");
   if (!viewport || !canvas) return;
 
-  applyTreeViewportTransform();
+  if (!treeViewportState.autoFitted) {
+    fitTreeViewport(false);
+    treeViewportState.autoFitted = true;
+  } else {
+    applyTreeViewportTransform();
+  }
   requestAnimationFrame(() => {
-    const svg = document.getElementById("tree-map-svg");
-    if (!svg) return;
-
-    svg.querySelectorAll("line[data-from][data-to]").forEach((line) => {
-      const from = document.getElementById(line.dataset.from);
-      const to = document.getElementById(line.dataset.to);
-      if (!from || !to) return;
-
-      const fromX = from.offsetLeft + from.offsetWidth / 2;
-      const fromY = from.offsetTop + from.offsetHeight;
-      const toX = to.offsetLeft + to.offsetWidth / 2;
-      const toY = to.offsetTop;
-
-      line.setAttribute("x1", String(fromX));
-      line.setAttribute("y1", String(fromY));
-      line.setAttribute("x2", String(toX));
-      line.setAttribute("y2", String(toY));
-    });
+    updateTreeEdges();
+    setupTreeNodeDragging(viewport);
   });
 
   viewport.onwheel = (event) => {
@@ -713,6 +861,10 @@ function setupTreeViewport() {
       applyTreeViewportTransform();
     };
   });
+
+  window.onresize = () => {
+    fitTreeViewport(true);
+  };
 }
 
 function renderTfc() {
