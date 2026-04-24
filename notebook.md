@@ -110,3 +110,39 @@ Important scope note:
 
 - this is for a later OB-tap/archive phase
 - do not implement it yet
+
+## 2026-04-24 - Tree View / Granddad Notes
+
+Future tree-view direction:
+
+- `Tree View` should move closer to a real navigable family tree, not just grouped role cards
+- the page should support pan/drag in all directions like a map
+- the page should support zoom in/out
+- touch should use pinch gesture
+- mouse should use wheel scroll for zoom
+- keep `Card View` for readable detail, but let `Tree View` become the spatial family structure view
+
+Generation rows:
+
+- `granddad` is the higher context row above parent
+- `parent` sits on its own aligned row
+- `child` sits on the row below parent
+- in tree view, parents should sit on the same line horizontally
+
+Granddad placeholder:
+
+- for now, granddad can use `?` as a placeholder head
+- this is only to reserve the higher-level layout shape before real granddad logic is active
+
+Orphan placement:
+
+- orphan belongs in the same child-layer space as the other children
+- orphan does not need a line to a parent
+- do not hard-fix orphan placement yet
+- let orphan remain flexible / floating for now because Akram already has a later idea for how orphan should be treated
+- do not over-design orphan placement before that later orphan/granddad logic is defined
+
+Important scope note:
+
+- these are layout and navigation notes to remember before coding
+- do not lock orphan into a rigid final position yet

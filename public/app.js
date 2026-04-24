@@ -10,6 +10,20 @@ let appState = {
   teachingNotes: JSON.parse(localStorage.getItem(TEACHING_NOTES_KEY) || "[]")
 };
 
+const treeViewportState = {
+  x: 48,
+  y: 32,
+  scale: 1,
+  pointers: new Map(),
+  pinchDistance: null,
+  pinchScale: 1,
+  dragPointerId: null,
+  dragStartX: 0,
+  dragStartY: 0,
+  startX: 0,
+  startY: 0
+};
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -386,6 +400,321 @@ function renderFamilyTree(family) {
     "<div class=\"tree-branches\">" + branchesHtml + "</div></article>";
 }
 
+function renderTreeGraphNode(node) {
+  return "<article id=\"" + escapeHtml(node.id) + "\" class=\"tree-graph-node tree-node role-" + escapeHtml(roleClass(node.role)) + " tree-node-kind-" + escapeHtml(node.kind) + "\" style=\"left:" + escapeHtml(String(node.x)) + "px;top:" + escapeHtml(String(node.y)) + "px;width:" + escapeHtml(String(node.width)) + "px;\">" +
+    "<span class=\"node-chapter\">" + escapeHtml(node.chapter) + "</span>" +
+    "<div><strong>" + escapeHtml(node.title) + "</strong><p>" + escapeHtml(node.subtitle) + "</p></div></article>";
+}
+
+function buildTreeGraph(families) {
+  const graph = {
+    nodes: [],
+    edges: [],
+    width: 1600,
+    height: 860
+  };
+  const parentWidth = 430;
+  const childWidth = 280;
+  const granddadWidth = 260;
+  const rowY = {
+    granddad: 56,
+    parent: 180,
+    child: 418,
+    orphan: 682
+  };
+  const familyGap = 120;
+  const childGap = 28;
+  let familyCursor = 80;
+  let orphanCursor = 140;
+
+  graph.nodes.push({
+    id: "granddad-placeholder",
+    kind: "granddad",
+    role: "granddad",
+    chapter: "?",
+    title: "Granddad Layer",
+    subtitle: "future higher context placeholder",
+    x: 640,
+    y: rowY.granddad,
+    width: granddadWidth
+  });
+
+  families.filter((family) => !family.loose).forEach((family, familyIndex) => {
+    const parent = family.parent;
+    const members = family.members.slice().sort((a, b) => {
+      const rank = {
+        close_child: 0,
+        child: 0,
+        extended_child: 1,
+        conflict_child: 2
+      };
+      return (rank[a.role] ?? 3) - (rank[b.role] ?? 3);
+    });
+
+    const clusterWidth = Math.max(parentWidth, members.length * childWidth + Math.max(0, members.length - 1) * childGap);
+    const clusterX = familyCursor;
+    const parentX = clusterX + (clusterWidth - parentWidth) / 2;
+    const parentId = "tree-parent-" + familyIndex;
+
+    graph.nodes.push({
+      id: parentId,
+      kind: "parent",
+      role: "parent",
+      chapter: family.familyChapter,
+      title: parent.symbol + " " + parent.timeframe + " Parent",
+      subtitle: parent.state + " · " + family.familyChapterName,
+      x: parentX,
+      y: rowY.parent,
+      width: parentWidth
+    });
+
+    members.forEach((member, memberIndex) => {
+      const roleLaneOffset = member.role === "extended_child"
+        ? 36
+        : member.role === "conflict_child"
+          ? 72
+          : 0;
+      const childX = clusterX + memberIndex * (childWidth + childGap);
+      const childId = "tree-member-" + familyIndex + "-" + memberIndex;
+
+      graph.nodes.push({
+        id: childId,
+        kind: "child",
+        role: member.role,
+        chapter: member.chapterCode,
+        title: member.symbol + " " + member.timeframe,
+        subtitle: roleLabel(member.role) + " · " + member.state + " · " + humanize(member.direction),
+        x: childX,
+        y: rowY.child + roleLaneOffset,
+        width: childWidth
+      });
+
+      graph.edges.push({
+        from: parentId,
+        to: childId,
+        role: member.role
+      });
+    });
+
+    familyCursor += clusterWidth + familyGap;
+  });
+
+  const looseMembers = families
+    .filter((family) => family.loose)
+    .flatMap((family) => family.members || []);
+
+  looseMembers.forEach((member, index) => {
+    const orphanId = "tree-orphan-" + index;
+    graph.nodes.push({
+      id: orphanId,
+      kind: "orphan",
+      role: member.role || "orphan",
+      chapter: member.chapterCode,
+      title: member.symbol + " " + member.timeframe,
+      subtitle: roleLabel(member.role || "orphan") + " · " + member.state + " · " + humanize(member.direction),
+      x: orphanCursor,
+      y: rowY.orphan + (index % 2) * 26,
+      width: childWidth
+    });
+    orphanCursor += childWidth + childGap;
+  });
+
+  graph.width = Math.max(graph.width, familyCursor + 160, orphanCursor + 160);
+  graph.height = looseMembers.length ? 1020 : 780;
+  return graph;
+}
+
+function renderTreeWorkspace(families) {
+  const graph = buildTreeGraph(families);
+  const nodesHtml = graph.nodes.map(renderTreeGraphNode).join("");
+  const edgesHtml = graph.edges.map((edge) => {
+    return "<line class=\"tree-edge role-" + escapeHtml(roleClass(edge.role)) + "\" data-from=\"" + escapeHtml(edge.from) + "\" data-to=\"" + escapeHtml(edge.to) + "\"></line>";
+  }).join("");
+
+  return "<div class=\"tree-map-shell\">" +
+    "<div class=\"tree-map-controls\" aria-label=\"Tree navigation\">" +
+      "<button type=\"button\" data-tree-zoom=\"in\" aria-label=\"Zoom in\">+</button>" +
+      "<button type=\"button\" data-tree-zoom=\"out\" aria-label=\"Zoom out\">-</button>" +
+      "<button type=\"button\" data-tree-zoom=\"reset\" aria-label=\"Reset view\">Reset</button>" +
+    "</div>" +
+    "<div id=\"tree-map-viewport\" class=\"tree-map-viewport\">" +
+      "<div id=\"tree-map-canvas\" class=\"tree-map-canvas\" style=\"width:" + escapeHtml(String(graph.width)) + "px;height:" + escapeHtml(String(graph.height)) + "px;\">" +
+        "<svg id=\"tree-map-svg\" class=\"tree-map-svg\" width=\"" + escapeHtml(String(graph.width)) + "\" height=\"" + escapeHtml(String(graph.height)) + "\" viewBox=\"0 0 " + escapeHtml(String(graph.width)) + " " + escapeHtml(String(graph.height)) + "\" preserveAspectRatio=\"xMinYMin meet\">" + edgesHtml + "</svg>" +
+        "<div class=\"tree-row-label row-granddad\">Granddad</div>" +
+        "<div class=\"tree-row-label row-parent\">Parents</div>" +
+        "<div class=\"tree-row-label row-child\">Children</div>" +
+        "<div class=\"tree-row-label row-orphan\">Orphans</div>" +
+        nodesHtml +
+      "</div>" +
+    "</div>" +
+  "</div>";
+}
+
+function clampTreeScale(value) {
+  return Math.min(2.2, Math.max(0.55, value));
+}
+
+function applyTreeViewportTransform() {
+  const canvas = document.getElementById("tree-map-canvas");
+  if (!canvas) return;
+  canvas.style.transform = `translate(${treeViewportState.x}px, ${treeViewportState.y}px) scale(${treeViewportState.scale})`;
+}
+
+function resetTreeViewport() {
+  treeViewportState.x = 48;
+  treeViewportState.y = 32;
+  treeViewportState.scale = 1;
+  applyTreeViewportTransform();
+}
+
+function getPointerDistance(points) {
+  const [a, b] = points;
+  if (!a || !b) return null;
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function beginTreeDrag(pointerId, clientX, clientY) {
+  treeViewportState.dragPointerId = pointerId;
+  treeViewportState.dragStartX = clientX;
+  treeViewportState.dragStartY = clientY;
+  treeViewportState.startX = treeViewportState.x;
+  treeViewportState.startY = treeViewportState.y;
+}
+
+function refreshTreeDragAnchor() {
+  const remaining = Array.from(treeViewportState.pointers.entries())[0];
+  if (!remaining) {
+    treeViewportState.dragPointerId = null;
+    return;
+  }
+
+  const [pointerId, point] = remaining;
+  beginTreeDrag(pointerId, point.x, point.y);
+}
+
+function setupTreeViewport() {
+  const viewport = document.getElementById("tree-map-viewport");
+  const canvas = document.getElementById("tree-map-canvas");
+  if (!viewport || !canvas) return;
+
+  applyTreeViewportTransform();
+  requestAnimationFrame(() => {
+    const svg = document.getElementById("tree-map-svg");
+    if (!svg) return;
+
+    svg.querySelectorAll("line[data-from][data-to]").forEach((line) => {
+      const from = document.getElementById(line.dataset.from);
+      const to = document.getElementById(line.dataset.to);
+      if (!from || !to) return;
+
+      const fromX = from.offsetLeft + from.offsetWidth / 2;
+      const fromY = from.offsetTop + from.offsetHeight;
+      const toX = to.offsetLeft + to.offsetWidth / 2;
+      const toY = to.offsetTop;
+
+      line.setAttribute("x1", String(fromX));
+      line.setAttribute("y1", String(fromY));
+      line.setAttribute("x2", String(toX));
+      line.setAttribute("y2", String(toY));
+    });
+  });
+
+  viewport.onwheel = (event) => {
+    event.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    const focusX = event.clientX - rect.left;
+    const focusY = event.clientY - rect.top;
+    const worldX = (focusX - treeViewportState.x) / treeViewportState.scale;
+    const worldY = (focusY - treeViewportState.y) / treeViewportState.scale;
+    const factor = event.deltaY < 0 ? 1.1 : 0.9;
+    const nextScale = clampTreeScale(treeViewportState.scale * factor);
+
+    treeViewportState.x = focusX - worldX * nextScale;
+    treeViewportState.y = focusY - worldY * nextScale;
+    treeViewportState.scale = nextScale;
+    applyTreeViewportTransform();
+  };
+
+  viewport.onpointerdown = (event) => {
+    if (event.target.closest(".tree-map-controls")) return;
+    viewport.setPointerCapture(event.pointerId);
+    treeViewportState.pointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY
+    });
+
+    if (treeViewportState.pointers.size === 1) {
+      beginTreeDrag(event.pointerId, event.clientX, event.clientY);
+    } else if (treeViewportState.pointers.size === 2) {
+      const points = Array.from(treeViewportState.pointers.values());
+      treeViewportState.pinchDistance = getPointerDistance(points);
+      treeViewportState.pinchScale = treeViewportState.scale;
+    }
+  };
+
+  viewport.onpointermove = (event) => {
+    if (!treeViewportState.pointers.has(event.pointerId)) return;
+
+    treeViewportState.pointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY
+    });
+
+    if (treeViewportState.pointers.size === 2) {
+      const points = Array.from(treeViewportState.pointers.values());
+      const distance = getPointerDistance(points);
+
+      if (distance && treeViewportState.pinchDistance) {
+        treeViewportState.scale = clampTreeScale(
+          treeViewportState.pinchScale * (distance / treeViewportState.pinchDistance)
+        );
+        applyTreeViewportTransform();
+      }
+
+      return;
+    }
+
+    if (treeViewportState.dragPointerId !== event.pointerId) return;
+
+    treeViewportState.x =
+      treeViewportState.startX + (event.clientX - treeViewportState.dragStartX);
+    treeViewportState.y =
+      treeViewportState.startY + (event.clientY - treeViewportState.dragStartY);
+    applyTreeViewportTransform();
+  };
+
+  const endPointer = (event) => {
+    treeViewportState.pointers.delete(event.pointerId);
+
+    if (treeViewportState.pointers.size < 2) {
+      treeViewportState.pinchDistance = null;
+    }
+
+    if (treeViewportState.dragPointerId === event.pointerId) {
+      refreshTreeDragAnchor();
+    }
+  };
+
+  viewport.onpointerup = endPointer;
+  viewport.onpointercancel = endPointer;
+  viewport.onlostpointercapture = endPointer;
+
+  viewport.querySelectorAll("[data-tree-zoom]").forEach((button) => {
+    button.onclick = () => {
+      const action = button.dataset.treeZoom;
+
+      if (action === "reset") {
+        resetTreeViewport();
+        return;
+      }
+
+      const factor = action === "in" ? 1.15 : 0.87;
+      treeViewportState.scale = clampTreeScale(treeViewportState.scale * factor);
+      applyTreeViewportTransform();
+    };
+  });
+}
+
 function renderTfc() {
   const fallbackStories = buildStories();
   const families = Array.isArray(appState.engine?.familyMap)
@@ -409,7 +738,9 @@ function renderTfc() {
 
   familyMap.classList.remove("empty-state", "family-map-tree", "family-map-cards");
   familyMap.classList.add(viewMode === "tree" ? "family-map-tree" : "family-map-cards");
-  familyMap.innerHTML = families.map((family) => viewMode === "tree" ? renderFamilyTree(family) : renderFamilyCard(family, collapsed.has(family.id))).join("");
+  familyMap.innerHTML = viewMode === "tree"
+    ? renderTreeWorkspace(families)
+    : families.map((family) => renderFamilyCard(family, collapsed.has(family.id))).join("");
 
   if (viewMode === "cards") {
     familyMap.querySelectorAll("details[data-family-id]").forEach((details) => {
@@ -426,6 +757,8 @@ function renderTfc() {
         saveCollapsedFamilies(next);
       });
     });
+  } else {
+    setupTreeViewport();
   }
 }
 
