@@ -2148,8 +2148,8 @@ function addRawEvent(payload) {
   state.latestRawEvent = entry;
   state.rawEvents.unshift(entry);
 
-  if (state.rawEvents.length > 100) {
-    state.rawEvents = state.rawEvents.slice(0, 100);
+  if (state.rawEvents.length > 500) {
+    state.rawEvents = state.rawEvents.slice(0, 500);
   }
 
   saveStateToFile();
