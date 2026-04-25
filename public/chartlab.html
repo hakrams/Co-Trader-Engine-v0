@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chart Lab - Co-Trader Engine V2</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="chartlab-body">
+  <div class="chartlab-shell">
+    <header class="chartlab-topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Co-Trader Engine V2</p>
+        <h1>Chart Lab</h1>
+      </div>
+
+      <div class="chartlab-actions">
+        <label class="select-control compact-control">
+          <span>Symbol</span>
+          <input id="chart-symbol" value="BTCUSD" />
+        </label>
+        <label class="select-control compact-control">
+          <span>TF</span>
+          <input id="chart-timeframe" value="1m" />
+        </label>
+        <button id="chart-refresh" class="primary-btn" type="button">Refresh</button>
+        <a class="topbar-link" href="/">Back to Market Story</a>
+      </div>
+    </header>
+
+    <main class="chartlab-main">
+      <section class="panel chart-panel chartlab-panel">
+        <div class="chart-toolbar">
+          <div>
+            <h3 id="chart-title">Waiting for candles</h3>
+            <p id="chart-summary" class="muted">Send candle_details webhooks to start drawing local candles.</p>
+          </div>
+          <div class="chart-legend">
+            <span><i class="legend-up"></i>Bullish</span>
+            <span><i class="legend-down"></i>Bearish</span>
+          </div>
+        </div>
+        <div id="candle-chart" class="candle-chart candle-chart-large empty-state">No candle data recorded yet.</div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/chartlab.js"></script>
+</body>
+</html>

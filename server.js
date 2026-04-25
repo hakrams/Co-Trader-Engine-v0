@@ -9,9 +9,14 @@ const logic = require("./src/logic");
 const ARCHIVE_RESET_PIN = "1234";
 const HISTORY_CLUES_FILE = path.join(__dirname, "data", "history-clues.json");
 const TREE_LAYOUT_FILE = path.join(__dirname, "data", "tree-layout.json");
+const CANDLES_FILE = path.join(__dirname, "data", "candles.json");
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
+
+app.get("/chartlab", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "chartlab.html"));
+});
 
 function readHistoryClues() {
   try {
@@ -70,6 +75,101 @@ function writeTreeLayout(nodeOffsets) {
       2
     )
   );
+}
+
+function readCandles() {
+  try {
+    if (!fs.existsSync(CANDLES_FILE)) {
+      return [];
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(CANDLES_FILE, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("[CANDLES READ ERROR]", error.message);
+    return [];
+  }
+}
+
+function writeCandles(items) {
+  fs.mkdirSync(path.dirname(CANDLES_FILE), { recursive: true });
+  fs.writeFileSync(CANDLES_FILE, JSON.stringify(items, null, 2));
+}
+
+function normalizeCandleKeyValue(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function buildCandleFromParsed(parsed) {
+  const event = parsed?.normalized || {};
+  const price = event.price || {};
+  const barTime = event.times?.bar_time || event.times?.timestamp || null;
+
+  if (
+    !event.symbol ||
+    !event.timeframe ||
+    !barTime ||
+    !Number.isFinite(price.open) ||
+    !Number.isFinite(price.high) ||
+    !Number.isFinite(price.low) ||
+    !Number.isFinite(price.close)
+  ) {
+    return null;
+  }
+
+  return {
+    id: [
+      normalizeCandleKeyValue(event.symbol),
+      event.timeframe,
+      new Date(barTime).toISOString()
+    ].join("_"),
+    symbol: normalizeCandleKeyValue(event.symbol),
+    exchange: event.meta?.exchange || null,
+    timeframe: event.timeframe,
+    barTime: new Date(barTime).toISOString(),
+    alertTime: event.times?.alert_time || null,
+    receivedAt: event.times?.received_at || parsed.raw?.received_at || null,
+    open: price.open,
+    high: price.high,
+    low: price.low,
+    close: price.close,
+    volume: Number.isFinite(event.volume) ? event.volume : null,
+    sourceEvent: event.event_raw || "candle_details"
+  };
+}
+
+function upsertCandle(parsed) {
+  const candle = buildCandleFromParsed(parsed);
+
+  if (!candle) {
+    return { ok: false, error: "Candle payload needs symbol, timeframe, bar_time/timestamp, and OHLC." };
+  }
+
+  const candles = readCandles();
+  const existingIndex = candles.findIndex((item) => item.id === candle.id);
+
+  if (existingIndex >= 0) {
+    candles[existingIndex] = {
+      ...candles[existingIndex],
+      ...candle
+    };
+  } else {
+    candles.push(candle);
+  }
+
+  const ordered = candles
+    .sort((a, b) => {
+      const symbolCompare = String(a.symbol || "").localeCompare(String(b.symbol || ""));
+      if (symbolCompare !== 0) return symbolCompare;
+      const timeframeCompare = String(a.timeframe || "").localeCompare(String(b.timeframe || ""));
+      if (timeframeCompare !== 0) return timeframeCompare;
+      return new Date(a.barTime || 0) - new Date(b.barTime || 0);
+    })
+    .slice(-5000);
+
+  writeCandles(ordered);
+
+  return { ok: true, candle };
 }
 
 
@@ -498,6 +598,10 @@ function deriveFamilyChapterName(code) {
 
 function hasRepeatedChildrenLiquidityContext(members) {
   const closeChildren = members.filter((member) => {
+    const hasObCreatedEvent = Array.isArray(member.events)
+      ? member.events.some((event) => event?.event_type === "ob_created")
+      : false;
+
     return (
       member &&
       member.timeframe === "3m" &&
@@ -505,7 +609,8 @@ function hasRepeatedChildrenLiquidityContext(members) {
       (
         member.latestClue === "bearish_ob" ||
         member.latestClue === "bullish_ob" ||
-        member.state === "order block created"
+        member.state === "order block created" ||
+        hasObCreatedEvent
       )
     );
   });
@@ -658,6 +763,12 @@ function buildLiveFamiliesFromHistory(history) {
 
         if (event.event_type === "ob_tap") {
           activeParent.tapCount += 1;
+
+          if (activeParent.tapCount >= 2 && activeParent.chapterCode === "?") {
+            activeParent.chapterCode = "L";
+            activeParent.chapterName = deriveFamilyChapterName("L");
+            activeParent.attention = getChapterRank("L");
+          }
         }
       }
 
@@ -701,6 +812,31 @@ function buildLiveFamiliesFromHistory(history) {
 
       families.push(childFamily);
       ensureChildFamilyBucket(event.symbol).push(childFamily);
+
+      if (activeParent) {
+        const closeChildCount = ensureChildFamilyBucket(event.symbol)
+          .filter((family) => {
+            const parentDirection = String(activeParent.direction || "unknown").trim();
+            const childDirection = String(family.direction || "unknown").trim();
+            const directionConflict =
+              parentDirection !== "unknown" &&
+              childDirection !== "unknown" &&
+              parentDirection !== childDirection;
+
+            return (
+              family.parentWindowId === activeParent.id &&
+              !directionConflict &&
+              childInsideParentRange(activeParent.ohlc, family.ohlc)
+            );
+          }).length;
+
+        if (closeChildCount >= 2 && activeParent.chapterCode === "?") {
+          activeParent.chapterCode = "L";
+          activeParent.chapterName = deriveFamilyChapterName("L");
+          activeParent.attention = getChapterRank("L");
+        }
+      }
+
       continue;
     }
 
@@ -901,6 +1037,20 @@ app.post("/webhook", (req, res) => {
 
     console.log("[PARSED EVENT]", JSON.stringify(parsed, null, 2));
 
+    if (parsed.normalized.event_type === "candle_details") {
+      const candleResult = upsertCandle(parsed);
+
+      if (!candleResult.ok) {
+        return res.status(400).json(candleResult);
+      }
+
+      return res.status(200).json({
+        ok: true,
+        storedAs: "candle",
+        candle: candleResult.candle
+      });
+    }
+
     if (parsed.normalized.event_type === "ob_tap") {
       state.trackLiquidityEngineeringObTap(
         parsed.normalized.symbol,
@@ -989,6 +1139,25 @@ app.get("/api/tree-layout", (req, res) => {
   res.json({
     ok: true,
     ...readTreeLayout()
+  });
+});
+
+app.get("/api/candles", (req, res) => {
+  const symbol = normalizeCandleKeyValue(req.query.symbol || "");
+  const timeframe = String(req.query.timeframe || "").trim().toLowerCase();
+  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 300));
+  const candles = readCandles()
+    .filter((item) => {
+      const symbolMatches = !symbol || normalizeCandleKeyValue(item.symbol) === symbol;
+      const timeframeMatches = !timeframe || String(item.timeframe || "").toLowerCase() === timeframe;
+      return symbolMatches && timeframeMatches;
+    })
+    .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0))
+    .slice(-limit);
+
+  res.json({
+    count: candles.length,
+    items: candles
   });
 });
 
@@ -1271,6 +1440,8 @@ app.post("/archive-reset", (req, res) => {
   }
 });
 
-app.listen(4000, "0.0.0.0", () => {
-  console.log("Server running on port 4000");
+const PORT = Number(process.env.PORT) || 4000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
 });

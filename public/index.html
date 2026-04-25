@@ -24,6 +24,7 @@
       </div>
 
       <div class="topbar-meta">
+        <a class="topbar-link" href="/chartlab">Open Chart Lab</a>
         <span id="active-view-label">PC View</span>
         <span id="system-clock">--</span>
       </div>
@@ -36,7 +37,6 @@
           <button class="nav-btn" type="button" data-page="open-clues">Open Clues</button>
           <button class="nav-btn" type="button" data-page="tfc">TFC / Family Map</button>
           <button class="nav-btn" type="button" data-page="history-clues">History Clues</button>
-          <button class="nav-btn" type="button" data-page="teaching">Teaching</button>
           <button class="nav-btn" type="button" data-page="raw-alerts">Raw Alerts</button>
           <button class="nav-btn" type="button" data-page="settings">Settings</button>
         </nav>
@@ -170,28 +170,6 @@
             <section class="panel">
               <h3>Saved Clues</h3>
               <div id="history-clue-list" class="stack-list empty-state">No history clues saved yet.</div>
-            </section>
-          </div>
-        </section>
-
-        <section class="page" data-page="teaching">
-          <div class="section-header">
-            <div>
-              <p class="section-kicker">Natural Teaching</p>
-              <h2>Teaching</h2>
-            </div>
-            <p id="teaching-status" class="inline-status"></p>
-          </div>
-
-          <div class="split-layout">
-            <form id="teaching-form" class="panel form-panel">
-              <label><span>Attach To</span><input name="target" placeholder="EURUSD 3M Chapter L" /></label>
-              <label><span>Free Explanation</span><textarea name="explanation" rows="9" placeholder="Explain naturally. Corrections, analogies, and rough wording are welcome."></textarea></label>
-              <button class="primary-btn" type="submit">Save Teaching Note</button>
-            </form>
-            <section class="panel">
-              <h3>Teaching Notes</h3>
-              <div id="teaching-note-list" class="stack-list empty-state">No teaching notes saved in this browser yet.</div>
             </section>
           </div>
         </section>

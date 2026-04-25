@@ -184,6 +184,14 @@ const EVENT_MAP = {
     structure_type: null,
     zone_type: "supply",
     direction: "bearish"
+  },
+
+  candle_details: {
+    event_family: "market_data",
+    event_type: "candle_details",
+    structure_type: null,
+    zone_type: null,
+    direction: null
   }
 };
 
