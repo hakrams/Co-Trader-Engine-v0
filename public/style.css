@@ -1121,11 +1121,13 @@ body.view-tablet .history-layout {
 }
 
 .candle-chart {
-  min-height: 560px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
   background: #0a1017;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .candle-chart.empty-state {
@@ -1136,9 +1138,8 @@ body.view-tablet .history-layout {
 
 .candle-chart-svg {
   display: block;
-  min-width: 980px;
   width: 100%;
-  height: 560px;
+  height: 100%;
 }
 
 .chart-plot-bg {
@@ -1202,13 +1203,15 @@ body.view-tablet .history-layout {
 }
 
 .chartlab-body {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .chartlab-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr;
+  overflow: hidden;
 }
 
 .chartlab-topbar {
@@ -1248,20 +1251,50 @@ body.view-tablet .history-layout {
 }
 
 .chartlab-main {
+  min-height: 0;
   padding: 18px 24px 24px;
+  overflow: hidden;
 }
 
 .chartlab-panel {
-  min-height: calc(100vh - 126px);
+  height: calc(100vh - 126px);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.chart-viewport {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0a1017;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.chart-viewport:active {
+  cursor: grabbing;
+}
+
+#chart-world {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .candle-chart-large {
-  min-height: calc(100vh - 248px);
+  height: 100%;
 }
 
 .candle-chart-svg-large {
-  min-height: 640px;
-  height: calc(100vh - 248px);
+  min-height: 0;
+  height: 100%;
 }
 
 @media (max-width: 1180px) {

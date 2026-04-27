@@ -146,3 +146,41 @@ Important scope note:
 
 - these are layout and navigation notes to remember before coding
 - do not lock orphan into a rigid final position yet
+
+## 2026-04-26 - Chart Lab Viewport Lesson
+
+Current Chart Lab direction:
+
+- Chart Lab should feel closer to TradingView than a static SVG preview
+- the chart space needs drag/pan, mouse-wheel zoom, and pinch zoom like the Family Tree map
+- the first repair copied the Family Tree-style viewport idea into Chart Lab: `chart-viewport` as the interaction surface and `chart-world` / chart layers as the moved content
+- this proved the interaction model can work, but it exposed a deeper charting issue
+
+Important lesson:
+
+- moving the whole SVG makes candles, grid, price labels, and time labels drift together
+- moving only the candle layer keeps axes visually fixed, but the axis values become stale because they still describe the original full dataset range
+- candles can also visually conflict with the fixed price/time axis zones unless the chart is treated as a real plot viewport
+
+Correct next architecture:
+
+- do not rely only on SVG transforms for the final TradingView-style behavior
+- treat `chartViewport` as a data camera, not just a CSS/SVG transform
+- horizontal drag should change the visible candle window / offset
+- vertical drag should shift the visible price range
+- wheel or pinch zoom should change candle spacing around the cursor
+- every camera change should redraw candles, grid lines, price labels, and time labels from the visible window
+- price axis and time axis should stay fixed in screen position, but their displayed values should be recalculated dynamically
+
+Scope note:
+
+- current quick interaction work is useful as a prototype
+- final Chart Lab needs a renderer rewrite around visible range and camera state before it will truly feel like TradingView
+
+## 2026-04-27 - Browser Verification Tooling
+
+Continuity note:
+
+- Akram is installing Playwright / Chromium so future Codex sessions can verify Chart Lab and dashboard behavior in a real browser
+- use Playwright for approved browser checks such as loading `http://127.0.0.1:4000/chartlab`, catching console errors, testing wheel zoom / drag behavior, and taking screenshots
+- do not assume browser verification is approved by default; ask Akram before running extra tests or making code changes, because he is trying to save credits
