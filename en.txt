@@ -1,5 +1,0 @@
-# Trading OS local secrets
-# Paste your real OpenAI key after the equals sign below, save the file, then tell Codex you are done.
-
-OPENAI_API_KEY=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
-# OPENAI_MODEL=Trading OS Model

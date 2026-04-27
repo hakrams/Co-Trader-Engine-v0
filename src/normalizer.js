@@ -106,6 +106,14 @@ const EVENT_MAP = {
     direction: "bearish"
   },
 
+  zone_created: {
+    event_family: "zone_creation",
+    event_type: "ob_created",
+    structure_type: null,
+    zone_type: null,
+    direction: "unknown"
+  },
+
   bullish_choch_detected: {
     event_family: "structure",
     event_type: "structure_detected",

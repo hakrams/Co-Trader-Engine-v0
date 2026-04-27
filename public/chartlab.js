@@ -18,7 +18,18 @@ const chartViewport = {
 };
 let chartMode = localStorage.getItem("chartLabMode") || "line";
 const chartState = {
-  candles: { count: 0, items: [] }
+  candles: { count: 0, items: [] },
+  symbols: []
+};
+
+const TIMEFRAME_MINUTES = {
+  "1m": 1,
+  "3m": 3,
+  "5m": 5,
+  "15m": 15,
+  "30m": 30,
+  "1h": 60,
+  "4h": 240
 };
 
 function escapeHtml(value) {
@@ -82,6 +93,62 @@ function normalizeCandles(items) {
       );
     })
     .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
+}
+
+function getBucketStartIso(value, timeframe) {
+  const minutes = TIMEFRAME_MINUTES[timeframe] || 1;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const bucketMs = minutes * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / bucketMs) * bucketMs).toISOString();
+}
+
+function aggregateCandlesFromOneMinute(items, targetTimeframe) {
+  const sourceCandles = normalizeCandles(items);
+
+  if (targetTimeframe === "1m") {
+    return sourceCandles;
+  }
+
+  const buckets = new Map();
+
+  for (const candle of sourceCandles) {
+    const bucketTime = getBucketStartIso(candle.barTime, targetTimeframe);
+    if (!bucketTime) continue;
+
+    if (!buckets.has(bucketTime)) {
+      buckets.set(bucketTime, {
+        id: `${candle.symbol}_${targetTimeframe}_${bucketTime}`,
+        symbol: candle.symbol,
+        exchange: candle.exchange || null,
+        timeframe: targetTimeframe,
+        barTime: bucketTime,
+        alertTime: candle.alertTime || null,
+        receivedAt: candle.receivedAt || null,
+        open: Number(candle.open),
+        high: Number(candle.high),
+        low: Number(candle.low),
+        close: Number(candle.close),
+        volume: Number.isFinite(Number(candle.volume)) ? Number(candle.volume) : null,
+        sourceEvent: "aggregated_from_1m"
+      });
+      continue;
+    }
+
+    const bucket = buckets.get(bucketTime);
+    bucket.high = Math.max(bucket.high, Number(candle.high));
+    bucket.low = Math.min(bucket.low, Number(candle.low));
+    bucket.close = Number(candle.close);
+    bucket.volume =
+      Number.isFinite(bucket.volume) || Number.isFinite(Number(candle.volume))
+        ? Number(bucket.volume || 0) + Number(candle.volume || 0)
+        : null;
+    bucket.alertTime = candle.alertTime || bucket.alertTime;
+    bucket.receivedAt = candle.receivedAt || bucket.receivedAt;
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
 }
 
 function getChartGeometry() {
@@ -185,7 +252,8 @@ function renderChartLab() {
   const summary = document.getElementById("chart-summary");
   if (!container) return;
 
-  const candles = normalizeCandles(chartState.candles.items);
+  const { timeframe } = getChartFilters();
+  const candles = aggregateCandlesFromOneMinute(chartState.candles.items, timeframe || "1m");
 
   if (!candles.length) {
     container.classList.add("empty-state");
@@ -275,10 +343,11 @@ function renderChartLab() {
   const latest = visible[visible.length - 1];
   if (title) {
     const modeLabel = chartMode === "line" ? "Line Chart" : "Candle Chart";
-    title.textContent = `${latest.symbol || "Market"} ${latest.timeframe || ""} ${modeLabel}`;
+    title.textContent = `${latest.symbol || "Market"} ${timeframe || latest.timeframe || ""} ${modeLabel}`;
   }
   if (summary) {
-    summary.textContent = `${visible.length} of ${candles.length} candles · ${leftIndex + 1}-${rightIndex + 1} · latest ${formatTimestamp(latest.barTime)} · O ${formatPrice(latest.open)} H ${formatPrice(latest.high)} L ${formatPrice(latest.low)} C ${formatPrice(latest.close)}`;
+    const sourceLabel = timeframe === "1m" ? "stored 1m" : `built from ${chartState.candles.items.length} stored 1m candles`;
+    summary.textContent = `${visible.length} of ${candles.length} candles · ${leftIndex + 1}-${rightIndex + 1} · ${sourceLabel} · latest ${formatTimestamp(latest.barTime)} · O ${formatPrice(latest.open)} H ${formatPrice(latest.high)} L ${formatPrice(latest.low)} C ${formatPrice(latest.close)}`;
   }
 
   container.classList.remove("empty-state");
@@ -313,11 +382,32 @@ async function loadCandles() {
   const params = new URLSearchParams({ limit: "500" });
 
   if (symbol) params.set("symbol", symbol);
-  if (timeframe) params.set("timeframe", timeframe);
+  params.set("timeframe", "1m");
 
   const res = await fetch(`/api/candles?${params.toString()}`);
   chartState.candles = await res.json();
   renderChartLab();
+}
+
+async function loadAvailableSymbols() {
+  const res = await fetch("/api/candles?limit=1000");
+  const data = await res.json();
+  const symbols = [...new Set((data.items || [])
+    .map((item) => String(item.symbol || "").trim().toUpperCase())
+    .filter(Boolean))]
+    .sort();
+  const select = document.getElementById("chart-symbol");
+  const storedSymbol = localStorage.getItem("chartLabSymbol") || "";
+  const nextSymbols = symbols.length ? symbols : ["BTCUSD"];
+
+  chartState.symbols = nextSymbols;
+
+  if (!select) return;
+
+  select.innerHTML = nextSymbols
+    .map((symbol) => `<option value="${escapeHtml(symbol)}">${escapeHtml(symbol)}</option>`)
+    .join("");
+  select.value = nextSymbols.includes(storedSymbol) ? storedSymbol : nextSymbols[0];
 }
 
 function setupChartLabControls() {
@@ -338,20 +428,32 @@ function setupChartLabControls() {
     refreshButton.addEventListener("click", loadCandles);
   }
 
-  ["chart-symbol", "chart-timeframe"].forEach((id) => {
-    const input = document.getElementById(id);
-    if (!input) return;
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        loadCandles();
-      }
+  const symbolSelect = document.getElementById("chart-symbol");
+  if (symbolSelect) {
+    symbolSelect.addEventListener("change", () => {
+      localStorage.setItem("chartLabSymbol", symbolSelect.value);
+      chartViewport.rightIndex = null;
+      chartViewport.stickToLatest = true;
+      chartViewport.priceManual = false;
+      loadCandles();
     });
-  });
+  }
+
+  const timeframeSelect = document.getElementById("chart-timeframe");
+  if (timeframeSelect) {
+    timeframeSelect.value = localStorage.getItem("chartLabTimeframe") || "1m";
+    timeframeSelect.addEventListener("change", () => {
+      localStorage.setItem("chartLabTimeframe", timeframeSelect.value);
+      chartViewport.rightIndex = null;
+      chartViewport.stickToLatest = true;
+      chartViewport.priceManual = false;
+      renderChartLab();
+    });
+  }
 }
 
 setupChartLabControls();
-loadCandles().catch((error) => {
+loadAvailableSymbols().then(loadCandles).catch((error) => {
   console.error("Failed to load candles:", error);
   const summary = document.getElementById("chart-summary");
   if (summary) summary.textContent = `Failed to load candles: ${error.message}`;

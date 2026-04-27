@@ -1,5 +1,34 @@
 # Co-Trader Engine V2 Working Notebook
 
+## 2026-04-28 - OB Box Tap Matching Patch
+
+Implemented boundary:
+
+- this patch only gives the engine physical OB box memory and tap overlap matching
+- it does not redesign family logic, add AI, rank OB priority, decide bullish/bearish direction, or change trade execution logic
+- `zone_created`, `bullish_ob`, and `bearish_ob` normalize to `ob_created` for storage
+- stored OB boxes are frozen from their original OHLC and original bar time
+- stored OB boxes use `direction: "unknown"` in the new matching layer
+- `Demand_ob_tap` and `Supply_ob_tap` are treated as tap alerts only; their direction is ignored for OB matching
+
+Tap matching rule:
+
+```text
+tap.high >= ob.low AND tap.low <= ob.high
+```
+
+Stored tap outcomes:
+
+- `matched_tap` when exactly one active same-symbol/same-timeframe OB box overlaps
+- `multi_zone_tap` when multiple active same-symbol/same-timeframe OB boxes overlap
+- `unmatched_tap` when no active same-symbol/same-timeframe OB box overlaps
+
+UI/API note:
+
+- `/state` now exposes `obBoxes` and `tapMatches`
+- the dashboard shows a compact OB Boxes and Tap Matches readout
+- Chart Lab candle storage remains separate through `candle_details` and `/api/candles`
+
 ## 2026-04-24 - Live Raw Alert Reality Check
 
 The live raw alert stream exposed that the current local story engine is still far behind the actual market flow.

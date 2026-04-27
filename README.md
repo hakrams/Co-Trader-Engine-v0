@@ -12,6 +12,7 @@ V1 has been archived separately, so this folder can be changed freely. The curre
 - captures every raw payload first, even if parsing fails
 - normalizes event names, timeframe values, numeric fields, and metadata
 - tracks setup progression per `symbol_timeframe`
+- freezes OB boxes from zone creation alerts and matches OB taps by price-range overlap
 - enforces simple sequence rules before state transitions
 - generates decision output from tracked setup state
 - persists engine state to `data/engine-state.json`
@@ -24,6 +25,7 @@ V1 has been archived separately, so this folder can be changed freely. The curre
 TradingView
   -> /webhook
   -> parser / normalizer
+  -> OB box storage / tap overlap matching
   -> state update
   -> rule validation
   -> decision mapping
@@ -81,16 +83,46 @@ co-trader-engine-v2/
 2. The raw payload is stored immediately.
 3. The parser validates and normalizes the payload.
 4. The normalized event is added to history.
-5. The rule layer checks whether the transition is allowed.
-6. The setup state is updated if valid.
-7. The reaction layer exposes a decision such as `monitoring` or `actionable`.
-8. The dashboard and API endpoints reflect the current engine view.
+5. Zone creation alerts freeze an OB box when OHLC data is available.
+6. OB tap alerts are compared against active same-symbol/same-timeframe OB boxes using price overlap.
+7. The rule layer checks whether the transition is allowed.
+8. The setup state is updated if valid.
+9. The reaction layer exposes a decision such as `monitoring` or `actionable`.
+10. The dashboard and API endpoints reflect the current engine view.
+
+## OB Box Tap Matching
+
+This layer gives the engine physical price memory. It does not decide trades, direction, priority, or family validity.
+
+When an OB creation event is received, the engine stores a frozen OB box with:
+
+- id, symbol, exchange, timeframe
+- original bar time and alert time
+- original open, high, low, close, volume
+- `source_event: "zone_created"`
+- `direction: "unknown"`
+- `status: "active"`
+
+When a `Demand_ob_tap` or `Supply_ob_tap` event is received, the engine compares the tap candle range against active stored OB boxes for the same symbol and timeframe:
+
+```text
+tap.high >= ob.low AND tap.low <= ob.high
+```
+
+Results are stored as:
+
+- `matched_tap` when exactly one OB overlaps
+- `multi_zone_tap` when more than one OB overlaps
+- `unmatched_tap` when no stored OB overlaps
+
+Important boundary: tap direction is ignored for this matching layer. Demand and Supply tap names only mean that a tap alert happened.
 
 ## Current Event Mapping
 
 ### Recognized normalized event types
 
 - `choch`
+- `ob_created`
 - `ob_tap`
 
 ### Current setup progression
@@ -107,6 +139,9 @@ co-trader-engine-v2/
 
 - `bullish_choch_detected`
 - `bearish_choch_detected`
+- `zone_created`
+- `bullish_ob`
+- `bearish_ob`
 - `Demand_ob_tap`
 - `Supply_ob_tap`
 
@@ -139,6 +174,8 @@ Returns:
 
 - latest parsed event
 - event history
+- stored OB boxes
+- OB tap match results
 - tracked setup states
 - derived reactions
 

@@ -406,6 +406,10 @@ textarea {
   grid-template-columns: minmax(340px, 0.9fr) minmax(0, 1.1fr);
 }
 
+.ob-monitor-layout {
+  margin-top: 16px;
+}
+
 .stack-list {
   display: grid;
   gap: 10px;
@@ -463,6 +467,26 @@ textarea {
 
 .orphan-card {
   border-left: 3px solid #d28454;
+}
+
+.ob-box-card {
+  border-left: 3px solid var(--cyan);
+}
+
+.tap-match-card {
+  border-left: 3px solid var(--line-strong);
+}
+
+.tap-match-card.result-matched-tap {
+  border-left-color: var(--green);
+}
+
+.tap-match-card.result-multi-zone-tap {
+  border-left-color: var(--accent);
+}
+
+.tap-match-card.result-unmatched-tap {
+  border-left-color: var(--red);
 }
 
 .json-box {
@@ -1240,7 +1264,8 @@ body.view-tablet .history-layout {
   min-width: 120px;
 }
 
-.compact-control input {
+.compact-control input,
+.compact-control select {
   width: 110px;
   min-height: 36px;
   border: 0;

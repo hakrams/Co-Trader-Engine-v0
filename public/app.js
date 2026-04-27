@@ -295,6 +295,78 @@ function renderDashboard() {
   grid.innerHTML = stories.map(renderStoryCard).join("");
 }
 
+function formatObRange(item) {
+  return `${item.low ?? "?"} - ${item.high ?? "?"}`;
+}
+
+function renderObBoxCard(box) {
+  const tappedLabel = box.tapped ? `tapped x${box.tap_count || 1}` : "waiting";
+
+  return `
+    <article class="raw-card ob-box-card">
+      <div class="note-card-head">
+        <h3>${escapeHtml(box.symbol || "unknown")} ${escapeHtml(box.timeframe || "unknown")}</h3>
+        <span class="role-pill">${escapeHtml(tappedLabel)}</span>
+      </div>
+      <p class="muted">${escapeHtml(box.id || "unknown")}</p>
+      <p class="ohlc-line">Range ${escapeHtml(formatObRange(box))}</p>
+      <p class="ohlc-line">O ${escapeHtml(box.open ?? "?")} / H ${escapeHtml(box.high ?? "?")} / L ${escapeHtml(box.low ?? "?")} / C ${escapeHtml(box.close ?? "?")}</p>
+      <p class="muted">Bar ${escapeHtml(formatTimestamp(box.bar_time))} · Source ${escapeHtml(box.source_event || "zone_created")}</p>
+    </article>
+  `;
+}
+
+function renderTapMatchCard(match) {
+  const tap = match.tap_event || {};
+  const ids = Array.isArray(match.matched_ob_ids) && match.matched_ob_ids.length
+    ? match.matched_ob_ids.join(", ")
+    : "none";
+
+  return `
+    <article class="raw-card tap-match-card result-${escapeHtml(roleClass(match.result))}">
+      <div class="note-card-head">
+        <h3>${escapeHtml(humanize(match.result))}</h3>
+        <span class="role-pill">${escapeHtml(tap.symbol || "unknown")} ${escapeHtml(tap.timeframe || "unknown")}</span>
+      </div>
+      <p class="ohlc-line">Tap range ${escapeHtml(formatObRange(tap))}</p>
+      <p class="muted">Matched OB ids: ${escapeHtml(ids)}</p>
+      <p class="muted">Created ${escapeHtml(formatTimestamp(match.created_at))}</p>
+    </article>
+  `;
+}
+
+function renderObTapMonitor() {
+  const boxList = document.getElementById("ob-box-list");
+  const matchList = document.getElementById("tap-match-list");
+  const boxes = Array.isArray(appState.engine?.obBoxes) ? appState.engine.obBoxes : [];
+  const matches = Array.isArray(appState.engine?.tapMatches) ? appState.engine.tapMatches : [];
+
+  if (boxList) {
+    if (!boxes.length) {
+      boxList.classList.add("empty-state");
+      boxList.textContent = "No stored OB boxes yet.";
+    } else {
+      boxList.classList.remove("empty-state");
+      boxList.innerHTML = boxes
+        .slice()
+        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+        .slice(0, 20)
+        .map(renderObBoxCard)
+        .join("");
+    }
+  }
+
+  if (matchList) {
+    if (!matches.length) {
+      matchList.classList.add("empty-state");
+      matchList.textContent = "No tap matches yet.";
+    } else {
+      matchList.classList.remove("empty-state");
+      matchList.innerHTML = matches.slice(0, 20).map(renderTapMatchCard).join("");
+    }
+  }
+}
+
 function renderOpenClues() {
   const grid = document.getElementById("open-clue-grid");
   if (!grid) return;
@@ -1300,6 +1372,7 @@ function renderAlertBanner() {
 function renderAll() {
   renderAlertBanner();
   renderDashboard();
+  renderObTapMonitor();
   renderOpenClues();
   renderTfc();
   renderHistoryClues();

@@ -1039,19 +1039,39 @@ app.post("/webhook", (req, res) => {
 
     if (parsed.normalized.event_type === "candle_details") {
       const candleResult = upsertCandle(parsed);
+      const reactionResult = state.observeObReactionFromCandle(parsed);
 
       if (!candleResult.ok) {
         return res.status(400).json(candleResult);
       }
 
+      if (reactionResult && !reactionResult.ok) {
+        console.log(`[OB REACTION] Not observed: ${reactionResult.error}`);
+      }
+
       return res.status(200).json({
         ok: true,
         storedAs: "candle",
-        candle: candleResult.candle
+        candle: candleResult.candle,
+        obReactionUpdated: reactionResult?.updated || 0
       });
     }
 
+    if (parsed.normalized.event_type === "ob_created") {
+      const obBoxResult = state.storeObBoxFromEvent(parsed);
+
+      if (obBoxResult && !obBoxResult.ok) {
+        console.log(`[OB BOX] Not stored: ${obBoxResult.error}`);
+      }
+    }
+
     if (parsed.normalized.event_type === "ob_tap") {
+      const tapMatchResult = state.matchObTapFromEvent(parsed);
+
+      if (tapMatchResult && !tapMatchResult.ok) {
+        console.log(`[OB TAP MATCH] Not matched: ${tapMatchResult.error}`);
+      }
+
       state.trackLiquidityEngineeringObTap(
         parsed.normalized.symbol,
         parsed.normalized.timeframe,

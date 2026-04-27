@@ -398,6 +398,132 @@ function ensureNotificationList(notifications) {
     .slice(0, 100);
 }
 
+function normalizeMarketSymbol(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeMarketTimeframe(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeObBoxRecord(box) {
+  if (!box || typeof box !== "object") {
+    return null;
+  }
+
+  const high = Number(box.high);
+  const low = Number(box.low);
+
+  if (!Number.isFinite(high) || !Number.isFinite(low)) {
+    return null;
+  }
+
+  return {
+    id: typeof box.id === "string" && box.id.trim() ? box.id.trim() : null,
+    symbol: normalizeMarketSymbol(box.symbol),
+    exchange: box.exchange || null,
+    timeframe: normalizeMarketTimeframe(box.timeframe),
+    bar_time: box.bar_time || box.barTime || null,
+    alert_time: box.alert_time || box.alertTime || null,
+    high,
+    low,
+    open: Number.isFinite(Number(box.open)) ? Number(box.open) : null,
+    close: Number.isFinite(Number(box.close)) ? Number(box.close) : null,
+    volume: Number.isFinite(Number(box.volume)) ? Number(box.volume) : null,
+    source_event: box.source_event || box.sourceEvent || "zone_created",
+    raw_source_event: box.raw_source_event || box.rawSourceEvent || null,
+    direction: "unknown",
+    status: box.status || "active",
+    active: box.active === false ? false : true,
+    archived: box.archived === true,
+    tapped: box.tapped === true,
+    tap_count: Number.isFinite(Number(box.tap_count ?? box.tapCount))
+      ? Number(box.tap_count ?? box.tapCount)
+      : 0,
+    tapCount: Number.isFinite(Number(box.tapCount ?? box.tap_count))
+      ? Number(box.tapCount ?? box.tap_count)
+      : Number.isFinite(Number(box.tap_count))
+        ? Number(box.tap_count)
+        : 0,
+    lastTapAt: box.lastTapAt || box.last_tapped_at || null,
+    priority: box.priority || null,
+    reactionWatch:
+      box.reactionWatch && typeof box.reactionWatch === "object"
+        ? {
+            ...box.reactionWatch,
+            candlesCollected: Array.isArray(box.reactionWatch.candlesCollected)
+              ? box.reactionWatch.candlesCollected
+              : [],
+            candlesCollectedCount: Array.isArray(box.reactionWatch.candlesCollected)
+              ? box.reactionWatch.candlesCollected.length
+              : 0
+          }
+        : null,
+    tap_events: Array.isArray(box.tap_events)
+      ? box.tap_events
+      : Array.isArray(box.tapEvents)
+        ? box.tapEvents
+        : [],
+    matched_tap_ids: Array.isArray(box.matched_tap_ids)
+      ? box.matched_tap_ids
+      : Array.isArray(box.matchedTapIds)
+        ? box.matchedTapIds
+        : [],
+    created_at: box.created_at || box.createdAt || null,
+    received_at: box.received_at || box.receivedAt || null,
+    updated_at: box.updated_at || box.updatedAt || null,
+    last_tapped_at: box.last_tapped_at || box.lastTappedAt || null
+  };
+}
+
+function ensureObBoxes(boxes) {
+  if (!Array.isArray(boxes)) {
+    return [];
+  }
+
+  return boxes
+    .map(normalizeObBoxRecord)
+    .filter((box) => box && box.id && box.symbol && box.timeframe)
+    .slice(-1000);
+}
+
+function normalizeTapMatchRecord(match) {
+  if (!match || typeof match !== "object") {
+    return null;
+  }
+
+  return {
+    id: typeof match.id === "string" && match.id.trim() ? match.id.trim() : null,
+    result:
+      match.result === "matched_tap" ||
+      match.result === "multi_zone_tap" ||
+      match.result === "unmatched_tap"
+        ? match.result
+        : "unmatched_tap",
+    tap_event: match.tap_event || match.tapEvent || null,
+    matched_ob_ids: Array.isArray(match.matched_ob_ids)
+      ? match.matched_ob_ids
+      : Array.isArray(match.matchedObIds)
+        ? match.matchedObIds
+        : [],
+    overlap_count: Number.isFinite(Number(match.overlap_count ?? match.overlapCount))
+      ? Number(match.overlap_count ?? match.overlapCount)
+      : 0,
+    created_at: match.created_at || match.createdAt || null
+  };
+}
+
+function ensureTapMatches(matches) {
+  if (!Array.isArray(matches)) {
+    return [];
+  }
+
+  return matches
+    .map(normalizeTapMatchRecord)
+    .filter((match) => match && match.id)
+    .slice(0, 1000);
+}
+
 const NOTIFICATION_PRIORITY_RANK = {
   info: 1,
   watch: 2,
@@ -1466,6 +1592,8 @@ const defaultState = {
   notificationSnapshots: createDefaultNotificationSnapshots(),
   notifications: [],
   history: [],
+  obBoxes: [],
+  tapMatches: [],
   setups: {},
   rawEvents: [],
   latestRawEvent: null,
@@ -1507,6 +1635,8 @@ function loadStateFromFile() {
       ),
       notifications: ensureNotificationList(parsed.notifications),
       history: Array.isArray(parsed.history) ? parsed.history : [],
+      obBoxes: ensureObBoxes(parsed.obBoxes),
+      tapMatches: ensureTapMatches(parsed.tapMatches),
       setups: safeSetups,
       rawEvents: Array.isArray(parsed.rawEvents) ? parsed.rawEvents : [],
       latestRawEvent: parsed.latestRawEvent ?? null,
@@ -1650,6 +1780,8 @@ function resetActiveState() {
   state.notificationSnapshots = createDefaultNotificationSnapshots();
   state.notifications = [];
   state.history = [];
+  state.obBoxes = [];
+  state.tapMatches = [];
   state.setups = protectedSetups;
   state.rawEvents = [];
   state.latestRawEvent = null;
@@ -2162,6 +2294,459 @@ function addEvent(event) {
   saveStateToFile();
 }
 
+function getNormalizedPriceRange(parsed) {
+  const price = parsed?.normalized?.price || {};
+  const high = Number(price.high);
+  const low = Number(price.low);
+
+  if (!Number.isFinite(high) || !Number.isFinite(low)) {
+    return null;
+  }
+
+  return { high, low };
+}
+
+function getNormalizedEventTimestamp(parsed) {
+  return (
+    parsed?.normalized?.times?.bar_time ||
+    parsed?.normalized?.times?.timestamp ||
+    parsed?.normalized?.times?.alert_time ||
+    parsed?.normalized?.times?.received_at ||
+    parsed?.raw?.received_at ||
+    null
+  );
+}
+
+function createObBoxId(parsed) {
+  const event = parsed?.normalized || {};
+  const price = event.price || {};
+  const rawTime = getNormalizedEventTimestamp(parsed) || new Date().toISOString();
+  const timePart = String(rawTime).replace(/[^0-9a-z]/gi, "");
+  const highPart = String(price.high).replace(/[^0-9a-z]/gi, "");
+  const lowPart = String(price.low).replace(/[^0-9a-z]/gi, "");
+
+  return [
+    "ob",
+    normalizeMarketSymbol(event.symbol),
+    normalizeMarketTimeframe(event.timeframe),
+    timePart,
+    highPart,
+    lowPart
+  ].join("_");
+}
+
+function storeObBoxFromEvent(parsed) {
+  if (parsed?.normalized?.event_type !== "ob_created") {
+    return null;
+  }
+
+  const event = parsed.normalized;
+  const price = event.price || {};
+  const range = getNormalizedPriceRange(parsed);
+  const symbol = normalizeMarketSymbol(event.symbol);
+  const timeframe = normalizeMarketTimeframe(event.timeframe);
+  const barTime =
+    event.times?.bar_time ||
+    event.times?.timestamp ||
+    event.times?.received_at ||
+    parsed.raw?.received_at ||
+    null;
+
+  if (!symbol || !timeframe || !barTime || !range) {
+    return {
+      ok: false,
+      error: "OB box needs symbol, timeframe, bar_time/timestamp, high, and low."
+    };
+  }
+
+  const id = createObBoxId(parsed);
+  const existing = ensureObBoxes(state.obBoxes).find((box) => box.id === id);
+
+  if (existing) {
+    state.obBoxes = ensureObBoxes(state.obBoxes);
+    return {
+      ok: true,
+      stored: false,
+      obBox: existing
+    };
+  }
+
+  const now = new Date().toISOString();
+  const obBox = {
+    id,
+    symbol,
+    exchange: event.meta?.exchange || null,
+    timeframe,
+    bar_time: toIsoOrNow(barTime),
+    alert_time: event.times?.alert_time || null,
+    high: range.high,
+    low: range.low,
+    open: Number.isFinite(price.open) ? price.open : null,
+    close: Number.isFinite(price.close) ? price.close : null,
+    volume: Number.isFinite(event.volume) ? event.volume : null,
+    source_event: "zone_created",
+    raw_source_event: event.event_raw || null,
+    direction: "unknown",
+    status: "active",
+    active: true,
+    archived: false,
+    tapped: false,
+    tap_count: 0,
+    tapCount: 0,
+    lastTapAt: null,
+    priority: null,
+    reactionWatch: null,
+    tap_events: [],
+    matched_tap_ids: [],
+    created_at: now,
+    received_at: event.times?.received_at || parsed.raw?.received_at || now,
+    updated_at: now,
+    last_tapped_at: null
+  };
+
+  state.obBoxes = ensureObBoxes([...ensureObBoxes(state.obBoxes), obBox]);
+  saveStateToFile();
+
+  return {
+    ok: true,
+    stored: true,
+    obBox
+  };
+}
+
+function rangesOverlap(tapRange, obBox) {
+  return tapRange.high >= obBox.low && tapRange.low <= obBox.high;
+}
+
+function createReactionWatch(tapEvent) {
+  return {
+    tapBarTime: tapEvent.bar_time || tapEvent.alert_time || tapEvent.received_at || new Date().toISOString(),
+    candlesCollected: [],
+    minCandles: 3,
+    maxCandles: 10,
+    status: "watching",
+    verdict: null
+  };
+}
+
+function createTapEventRecord(parsed) {
+  const event = parsed?.normalized || {};
+  const price = event.price || {};
+  const tapTime = getNormalizedEventTimestamp(parsed) || new Date().toISOString();
+
+  return {
+    id: [
+      "tap",
+      normalizeMarketSymbol(event.symbol),
+      normalizeMarketTimeframe(event.timeframe),
+      String(tapTime).replace(/[^0-9a-z]/gi, ""),
+      String(parsed?.raw?.received_at || Date.now()).replace(/[^0-9a-z]/gi, "")
+    ].join("_"),
+    event_raw: event.event_raw || null,
+    symbol: normalizeMarketSymbol(event.symbol),
+    exchange: event.meta?.exchange || null,
+    timeframe: normalizeMarketTimeframe(event.timeframe),
+    bar_time: event.times?.bar_time || event.times?.timestamp || null,
+    alert_time: event.times?.alert_time || null,
+    received_at: event.times?.received_at || parsed?.raw?.received_at || null,
+    high: Number.isFinite(price.high) ? price.high : null,
+    low: Number.isFinite(price.low) ? price.low : null,
+    open: Number.isFinite(price.open) ? price.open : null,
+    close: Number.isFinite(price.close) ? price.close : null,
+    volume: Number.isFinite(event.volume) ? event.volume : null
+  };
+}
+
+function matchObTapFromEvent(parsed) {
+  if (parsed?.normalized?.event_type !== "ob_tap") {
+    return null;
+  }
+
+  const tapRange = getNormalizedPriceRange(parsed);
+  const tapEvent = createTapEventRecord(parsed);
+
+  if (!tapEvent.symbol || !tapEvent.timeframe || !tapRange) {
+    return {
+      ok: false,
+      error: "OB tap needs symbol, timeframe, high, and low."
+    };
+  }
+
+  const activeBoxes = ensureObBoxes(state.obBoxes).filter((box) => {
+    return (
+      box.active !== false &&
+      box.archived !== true &&
+      box.status !== "invalidated" &&
+      box.symbol === tapEvent.symbol &&
+      box.timeframe === tapEvent.timeframe
+    );
+  });
+  const matchedBoxes = activeBoxes.filter((box) => rangesOverlap(tapRange, box));
+  const matchedObIds = matchedBoxes.map((box) => box.id);
+  const result =
+    matchedObIds.length === 1
+      ? "matched_tap"
+      : matchedObIds.length > 1
+        ? "multi_zone_tap"
+        : "unmatched_tap";
+  const now = new Date().toISOString();
+  const match = {
+    id: `${tapEvent.id}_${now.replace(/[^0-9a-z]/gi, "")}`,
+    result,
+    tap_event: tapEvent,
+    matched_ob_ids: matchedObIds,
+    overlap_count: matchedObIds.length,
+    created_at: now
+  };
+
+  if (matchedObIds.length) {
+    const matchedSet = new Set(matchedObIds);
+
+    state.obBoxes = ensureObBoxes(state.obBoxes).map((box) => {
+      if (!matchedSet.has(box.id)) {
+        return box;
+      }
+
+      return {
+        ...box,
+        status: "tapped_pending_reaction",
+        active: true,
+        archived: false,
+        tapped: true,
+        tap_count: Number(box.tap_count || 0) + 1,
+        tapCount: Number(box.tapCount || box.tap_count || 0) + 1,
+        lastTapAt: tapEvent.bar_time || tapEvent.alert_time || tapEvent.received_at || now,
+        reactionWatch: createReactionWatch(tapEvent),
+        tap_events: [...(box.tap_events || []), tapEvent].slice(-20),
+        matched_tap_ids: [...new Set([...(box.matched_tap_ids || []), match.id])],
+        updated_at: now,
+        last_tapped_at: tapEvent.bar_time || tapEvent.alert_time || tapEvent.received_at || now
+      };
+    });
+  } else {
+    state.obBoxes = ensureObBoxes(state.obBoxes);
+  }
+
+  state.tapMatches = ensureTapMatches([match, ...ensureTapMatches(state.tapMatches)]);
+  saveStateToFile();
+
+  return {
+    ok: true,
+    match
+  };
+}
+
+function buildReactionCandle(parsed) {
+  const event = parsed?.normalized || {};
+  const price = event.price || {};
+  const barTime = event.times?.bar_time || event.times?.timestamp || null;
+
+  if (
+    event.event_type !== "candle_details" ||
+    !event.symbol ||
+    !event.timeframe ||
+    !barTime ||
+    !Number.isFinite(price.high) ||
+    !Number.isFinite(price.low) ||
+    !Number.isFinite(price.close)
+  ) {
+    return null;
+  }
+
+  return {
+    symbol: normalizeMarketSymbol(event.symbol),
+    exchange: event.meta?.exchange || null,
+    timeframe: normalizeMarketTimeframe(event.timeframe),
+    barTime: toIsoOrNow(barTime),
+    alertTime: event.times?.alert_time || null,
+    receivedAt: event.times?.received_at || parsed.raw?.received_at || null,
+    open: Number.isFinite(price.open) ? price.open : null,
+    high: price.high,
+    low: price.low,
+    close: price.close,
+    volume: Number.isFinite(event.volume) ? event.volume : null
+  };
+}
+
+function getObReactionSide(obBox) {
+  const direction = String(obBox.direction || "unknown").toLowerCase();
+
+  if (direction === "demand" || direction === "bullish") {
+    return "demand";
+  }
+
+  if (direction === "supply" || direction === "bearish") {
+    return "supply";
+  }
+
+  return "unknown";
+}
+
+function candleOverlapsOb(candle, obBox) {
+  return candle.high >= obBox.low && candle.low <= obBox.high;
+}
+
+function applyReactionVerdict(obBox, candle) {
+  const side = getObReactionSide(obBox);
+  const watch = obBox.reactionWatch || createReactionWatch({ bar_time: candle.barTime });
+  const collectedCount = Array.isArray(watch.candlesCollected)
+    ? watch.candlesCollected.length
+    : 0;
+
+  if (side === "demand") {
+    if (candle.close < obBox.low) {
+      return {
+        ...obBox,
+        status: "invalidated",
+        active: false,
+        archived: true,
+        reactionWatch: {
+          ...watch,
+          status: "complete",
+          verdict: "invalidated"
+        }
+      };
+    }
+
+    if (candle.close > obBox.high) {
+      const highPriority = obBox.status === "liquidity_engineering_active";
+      return {
+        ...obBox,
+        status: highPriority ? "respected_high_priority" : "respected",
+        priority: highPriority ? "high" : obBox.priority || null,
+        reactionWatch: {
+          ...watch,
+          status: "complete",
+          verdict: highPriority ? "respected_high_priority" : "respected"
+        }
+      };
+    }
+  }
+
+  if (side === "supply") {
+    if (candle.close > obBox.high) {
+      return {
+        ...obBox,
+        status: "invalidated",
+        active: false,
+        archived: true,
+        reactionWatch: {
+          ...watch,
+          status: "complete",
+          verdict: "invalidated"
+        }
+      };
+    }
+
+    if (candle.close < obBox.low) {
+      const highPriority = obBox.status === "liquidity_engineering_active";
+      return {
+        ...obBox,
+        status: highPriority ? "respected_high_priority" : "respected",
+        priority: highPriority ? "high" : obBox.priority || null,
+        reactionWatch: {
+          ...watch,
+          status: "complete",
+          verdict: highPriority ? "respected_high_priority" : "respected"
+        }
+      };
+    }
+  }
+
+  if (collectedCount >= watch.minCandles && candleOverlapsOb(candle, obBox)) {
+    return {
+      ...obBox,
+      status: "liquidity_engineering_active",
+      reactionWatch: {
+        ...watch,
+        status: collectedCount >= watch.maxCandles ? "max_window_complete" : "watching",
+        verdict: collectedCount >= watch.maxCandles ? "liquidity_engineering_active" : watch.verdict
+      }
+    };
+  }
+
+  if (side === "unknown" && collectedCount >= watch.maxCandles) {
+    return {
+      ...obBox,
+      status:
+        obBox.status === "liquidity_engineering_active"
+          ? "liquidity_engineering_active"
+          : "reaction_pending_direction",
+      reactionWatch: {
+        ...watch,
+        status: "max_window_complete",
+        verdict: obBox.status === "liquidity_engineering_active" ? "liquidity_engineering_active" : null
+      }
+    };
+  }
+
+  return obBox;
+}
+
+function observeObReactionFromCandle(parsed) {
+  const candle = buildReactionCandle(parsed);
+
+  if (!candle) {
+    return {
+      ok: false,
+      updated: 0,
+      error: "Reaction candle needs candle_details with symbol, timeframe, bar_time, high, low, and close."
+    };
+  }
+
+  let updated = 0;
+
+  state.obBoxes = ensureObBoxes(state.obBoxes).map((box) => {
+    const watch = box.reactionWatch;
+
+    if (
+      !watch ||
+      !["tapped_pending_reaction", "liquidity_engineering_active"].includes(box.status) ||
+      watch.status === "complete" ||
+      watch.status === "max_window_complete" ||
+      box.symbol !== candle.symbol ||
+      box.timeframe !== candle.timeframe ||
+      new Date(candle.barTime).getTime() <= new Date(watch.tapBarTime).getTime()
+    ) {
+      return box;
+    }
+
+    const maxCandles = Number(watch.maxCandles || 10);
+    const candlesCollected = Array.isArray(watch.candlesCollected)
+      ? watch.candlesCollected
+      : [];
+
+    if (candlesCollected.some((item) => item.barTime === candle.barTime)) {
+      return box;
+    }
+
+    const nextWatch = {
+      ...watch,
+      candlesCollected: [...candlesCollected, candle].slice(0, maxCandles)
+    };
+
+    updated += 1;
+
+    return applyReactionVerdict(
+      {
+        ...box,
+        reactionWatch: nextWatch,
+        updated_at: new Date().toISOString()
+      },
+      candle
+    );
+  });
+
+  if (updated > 0) {
+    saveStateToFile();
+  }
+
+  return {
+    ok: true,
+    updated
+  };
+}
+
 function getSetup(symbol, timeframe, direction) {
   const key = getKey(symbol, timeframe, direction);
   const setup = state.setups[key] || null;
@@ -2303,6 +2888,8 @@ function getState() {
     notificationSettings: getPublicNotificationSettings(),
     notificationSnapshots: ensureNotificationSnapshots(state.notificationSnapshots),
     notifications: ensureNotificationList(state.notifications),
+    obBoxes: ensureObBoxes(state.obBoxes),
+    tapMatches: ensureTapMatches(state.tapMatches),
     setups: safeSetups
   };
 }
@@ -2421,6 +3008,9 @@ module.exports = {
   ensureSetupHasExecutionValidation,
   createDefaultLiquidityEngineering,
   ensureSetupHasLiquidityEngineering,
+  storeObBoxFromEvent,
+  matchObTapFromEvent,
+  observeObReactionFromCandle,
   trackLiquidityEngineeringObTap,
   refreshLiquidityEngineeringForSetup,
   refreshAllLiquidityEngineeringStates,

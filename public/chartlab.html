@@ -17,11 +17,19 @@
       <div class="chartlab-actions">
         <label class="select-control compact-control">
           <span>Symbol</span>
-          <input id="chart-symbol" value="BTCUSD" />
+          <select id="chart-symbol"></select>
         </label>
         <label class="select-control compact-control">
           <span>TF</span>
-          <input id="chart-timeframe" value="1m" />
+          <select id="chart-timeframe">
+            <option value="1m">1M</option>
+            <option value="3m">3M</option>
+            <option value="5m">5M</option>
+            <option value="15m">15M</option>
+            <option value="30m">30M</option>
+            <option value="1h">1H</option>
+            <option value="4h">4H</option>
+          </select>
         </label>
         <button id="chart-mode-toggle" class="topbar-link" type="button">Line Mode</button>
         <button id="chart-refresh" class="primary-btn" type="button">Refresh</button>
