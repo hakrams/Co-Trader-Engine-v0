@@ -248,7 +248,13 @@ function syncPriceCamera(visibleCandles) {
 }
 
 function getObTime(obBox) {
-  return obBox?.bar_time || obBox?.barTime || null;
+  return (
+    obBox?.zoneOriginTime ||
+    obBox?.zone_origin_time ||
+    obBox?.bar_time ||
+    obBox?.barTime ||
+    null
+  );
 }
 
 function getShortObId(obBox) {

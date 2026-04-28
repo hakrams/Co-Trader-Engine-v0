@@ -437,13 +437,27 @@ function normalizeObBoxRecord(box) {
     return null;
   }
 
+  const timeframe = normalizeMarketTimeframe(box.timeframe);
+  const barTime = box.bar_time || box.barTime || null;
+  const alertTime = box.alert_time || box.alertTime || null;
+  const confirmationBarTime =
+    box.confirmation_bar_time || box.confirmationBarTime || barTime;
+  const zoneOriginTime =
+    box.zoneOriginTime ||
+    box.zone_origin_time ||
+    calculateZoneOriginTime(confirmationBarTime, alertTime, timeframe);
+
   return {
     id: typeof box.id === "string" && box.id.trim() ? box.id.trim() : null,
     symbol: normalizeMarketSymbol(box.symbol),
     exchange: box.exchange || null,
-    timeframe: normalizeMarketTimeframe(box.timeframe),
-    bar_time: box.bar_time || box.barTime || null,
-    alert_time: box.alert_time || box.alertTime || null,
+    timeframe,
+    bar_time: barTime,
+    confirmation_bar_time: confirmationBarTime,
+    confirmationBarTime,
+    zone_origin_time: zoneOriginTime,
+    zoneOriginTime,
+    alert_time: alertTime,
     high,
     low,
     open: Number.isFinite(Number(box.open)) ? Number(box.open) : null,
@@ -501,10 +515,24 @@ function normalizeObBoxRecord(box) {
             confidence: box.birthWatch.confidence || "none",
             reason: box.birthWatch.reason || null,
             mode: box.birthWatch.mode || "future_candles",
-            obBarTime: box.birthWatch.obBarTime || box.birthWatch.windowStart || box.bar_time || null,
-            alertTime: box.birthWatch.alertTime || box.alert_time || null,
-            windowStart: box.birthWatch.windowStart || box.birthWatch.obBarTime || box.bar_time || null,
-            windowEnd: box.birthWatch.windowEnd || box.birthWatch.alertTime || box.alert_time || null,
+            obBarTime: box.birthWatch.obBarTime || barTime,
+            confirmationBarTime:
+              box.birthWatch.confirmationBarTime ||
+              box.birthWatch.confirmation_bar_time ||
+              confirmationBarTime,
+            zoneOriginTime:
+              box.birthWatch.zoneOriginTime ||
+              box.birthWatch.zone_origin_time ||
+              zoneOriginTime,
+            windowStart:
+              box.birthWatch.windowStart ||
+              box.birthWatch.zoneOriginTime ||
+              box.birthWatch.zone_origin_time ||
+              zoneOriginTime ||
+              box.birthWatch.obBarTime ||
+              barTime,
+            alertTime: box.birthWatch.alertTime || alertTime,
+            windowEnd: box.birthWatch.windowEnd || box.birthWatch.alertTime || alertTime,
             candleSource: box.birthWatch.candleSource || null
           }
         : null,
@@ -2546,7 +2574,12 @@ function createObBoxId(parsed) {
 
 function createBirthWatch(obBox) {
   const now = new Date().toISOString();
-  const windowStart = obBox.bar_time || now;
+  const confirmationBarTime = obBox.confirmation_bar_time || obBox.bar_time || null;
+  const zoneOriginTime =
+    obBox.zone_origin_time ||
+    obBox.zoneOriginTime ||
+    calculateZoneOriginTime(confirmationBarTime, obBox.alert_time, obBox.timeframe);
+  const windowStart = zoneOriginTime || confirmationBarTime || now;
   const windowEnd =
     obBox.alert_time ||
     obBox.received_at ||
@@ -2556,7 +2589,9 @@ function createBirthWatch(obBox) {
   return {
     mode: "confirmation_window",
     startedAt: now,
-    obBarTime: windowStart,
+    obBarTime: confirmationBarTime || windowStart,
+    confirmationBarTime,
+    zoneOriginTime,
     alertTime: obBox.alert_time || null,
     windowStart,
     windowEnd,
@@ -2583,6 +2618,24 @@ function getTimeframeMinutes(value) {
 
   if (/^\d+$/.test(timeframe)) {
     return Number(timeframe);
+  }
+
+  return null;
+}
+
+function calculateZoneOriginTime(confirmationBarTime, alertTime, timeframe) {
+  const alertMs = alertTime ? new Date(alertTime).getTime() : NaN;
+  const confirmationMs = confirmationBarTime
+    ? new Date(confirmationBarTime).getTime()
+    : NaN;
+  const minutes = getTimeframeMinutes(timeframe);
+
+  if (Number.isFinite(alertMs) && minutes) {
+    return new Date(alertMs - minutes * 3 * 60 * 1000).toISOString();
+  }
+
+  if (Number.isFinite(confirmationMs)) {
+    return new Date(confirmationMs).toISOString();
   }
 
   return null;
@@ -2625,7 +2678,15 @@ function normalizeBirthCandleRecord(candle) {
 }
 
 function getBirthWatchWindow(watch, obBox) {
-  const windowStart = watch?.windowStart || watch?.obBarTime || obBox?.bar_time || null;
+  const windowStart =
+    watch?.windowStart ||
+    watch?.zoneOriginTime ||
+    watch?.zone_origin_time ||
+    obBox?.zoneOriginTime ||
+    obBox?.zone_origin_time ||
+    watch?.obBarTime ||
+    obBox?.bar_time ||
+    null;
   const windowEnd =
     watch?.windowEnd ||
     watch?.alertTime ||
@@ -2766,7 +2827,17 @@ function applyBirthWatchResult(obBox, selectedCandles, candleSource, requiredCan
   const nextWatch = {
     ...watch,
     mode: "confirmation_window",
-    obBarTime: windowStart,
+    obBarTime: obBox.confirmation_bar_time || obBox.bar_time || watch.obBarTime || null,
+    confirmationBarTime:
+      obBox.confirmation_bar_time ||
+      obBox.confirmationBarTime ||
+      watch.confirmationBarTime ||
+      null,
+    zoneOriginTime:
+      obBox.zone_origin_time ||
+      obBox.zoneOriginTime ||
+      watch.zoneOriginTime ||
+      windowStart,
     alertTime: obBox.alert_time || watch.alertTime || null,
     windowStart,
     windowEnd,
@@ -2851,13 +2922,20 @@ function storeObBoxFromEvent(parsed, storedCandles = []) {
   }
 
   const now = new Date().toISOString();
+  const normalizedBarTime = toIsoOrNow(barTime);
+  const alertTime = event.times?.alert_time || null;
+  const zoneOriginTime = calculateZoneOriginTime(normalizedBarTime, alertTime, timeframe);
   const obBox = {
     id,
     symbol,
     exchange: event.meta?.exchange || null,
     timeframe,
-    bar_time: toIsoOrNow(barTime),
-    alert_time: event.times?.alert_time || null,
+    bar_time: normalizedBarTime,
+    confirmation_bar_time: normalizedBarTime,
+    confirmationBarTime: normalizedBarTime,
+    zone_origin_time: zoneOriginTime,
+    zoneOriginTime,
+    alert_time: alertTime,
     high: range.high,
     low: range.low,
     open: Number.isFinite(price.open) ? price.open : null,

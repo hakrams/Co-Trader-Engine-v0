@@ -453,3 +453,18 @@ Missing candles:
 Boundary:
 
 - no OB tap matching, reactionWatch, reactionHistory, eyeOpener, Chart Lab rendering, TFC, trade decision, AI, fake/bait/real, or final OB direction behavior was changed
+
+## 2026-04-28 - Zone Origin Correction
+
+Corrected the OB timing interpretation after live visual inspection:
+
+- TradingView/LuxAlgo `zone_created` payload `bar_time` is the final confirmation candle time, not the true visual OB origin
+- the true origin is now computed as `alert_time - 3 * timeframe`
+- raw payload `bar_time` is preserved as `confirmation_bar_time`
+- OBs now expose `zone_origin_time` / `zoneOriginTime`
+- BirthWatch confirmation windows start from `zone_origin_time`
+- Chart Lab OB overlays prefer `zoneOriginTime` / `zone_origin_time` before falling back to `bar_time`
+
+Boundary:
+
+- no tap matching, reactionWatch, reactionHistory, eyeOpener, OB range, final direction, trade decision, or test payload behavior was changed
