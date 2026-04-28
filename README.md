@@ -6,6 +6,18 @@ Co-Trader Engine V2 is the active working folder for the next direction of the t
 
 V1 has been archived separately, so this folder can be changed freely. The current codebase still contains the V1 webhook intake, parser, state persistence, decision logic, and dashboard foundation until the V2 architecture replaces or reshapes those pieces.
 
+## Hard Memory Rule
+
+Markdown files are the persistent memory for this project. Any meaningful implementation, test result, rule decision, future improvement, or scope boundary must be written into the relevant `.md` files before the work is considered complete.
+
+Minimum expectation:
+
+- update `README.md` when the rule affects project-wide behavior or future contributor instructions
+- update `notebook.md` when the rule affects current working understanding or near-term planned work
+- update `.codex-notes/v2/v2-journal.md` for step-by-step progress, test outcomes, decisions, and discoveries
+
+Do not rely on chat memory alone for project continuity.
+
 ## Current Baseline
 
 - accepts TradingView-style webhook payloads through `POST /webhook`
@@ -187,6 +199,24 @@ Returns:
 - latest raw payload
 - recent raw payload history
 
+Raw alert storage rotates automatically at 500 stored alerts. When the limit is reached, the current raw-alert batch is archived under `data/archive/` and the next incoming alert starts a fresh raw-alert feed. This rotation only affects raw alerts; it does not clear Family Map clues, OB boxes, setups, history clues, candles, or Chart Lab data.
+
+### `POST /archive-reset`
+
+Archives and clears only the raw alert feed. This endpoint is intentionally separate from Family Map reset behavior.
+
+### `POST /family-map-reset`
+
+Clears live Family Map clue state only:
+
+- latest parsed event
+- parsed event history
+- stored OB boxes
+- OB tap matches
+- setup state
+
+It also clears saved manual history clues. It preserves raw alerts, candles, Chart Lab data, tree layout, and settings.
+
 ## Local Run
 
 ### Requirements
@@ -236,7 +266,7 @@ That state currently includes:
 - no authentication
 - no duplicate-alert protection yet
 - event progression is still intentionally simple
-- raw history is capped to a recent rolling window
+- raw history rotates into archive files at the 500-alert limit
 - dashboard polling is basic
 - package metadata still needs cleanup in some places outside this README
 

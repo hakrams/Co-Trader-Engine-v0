@@ -95,6 +95,10 @@
               <div id="ob-box-list" class="stack-list empty-state">No stored OB boxes yet.</div>
             </section>
             <section class="panel">
+              <h3>Eye Openers</h3>
+              <div id="eye-opener-list" class="stack-list empty-state">No eye openers yet.</div>
+            </section>
+            <section class="panel">
               <h3>Tap Matches</h3>
               <div id="tap-match-list" class="stack-list empty-state">No tap matches yet.</div>
             </section>
@@ -222,11 +226,20 @@
           </section>
 
           <section class="panel settings-panel">
-            <h3>Archive & Reset Active</h3>
-            <p>Creates a timestamped archive snapshot, then clears active runtime state (including raw alerts/history). Protected setups may be preserved by engine rules.</p>
+            <h3>Archive & Reset Raw Alerts</h3>
+            <p>Creates a timestamped archive of the raw alert feed, then clears only raw alerts. Family Map clues, OB boxes, setup state, history clues, and candles are preserved.</p>
             <div class="settings-actions">
-              <button id="archive-reset-btn" class="danger-btn" type="button">Archive & Reset Active</button>
+              <button id="archive-reset-btn" class="danger-btn" type="button">Archive & Reset Raw Alerts</button>
               <p id="archive-reset-status" class="inline-status muted">Idle.</p>
+            </div>
+          </section>
+
+          <section class="panel settings-panel">
+            <h3>Family Map Reset</h3>
+            <p>Clears live family-map clues, saved history clues, OB boxes, tap matches, and setup state. Candles, Chart Lab data, raw alerts, and tree layout are preserved.</p>
+            <div class="settings-actions">
+              <button id="family-map-reset-btn" class="danger-btn" type="button">Reset Family Map</button>
+              <p id="family-map-reset-status" class="inline-status muted">Idle.</p>
             </div>
           </section>
         </section>

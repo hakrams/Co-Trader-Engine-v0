@@ -7,6 +7,7 @@ const parser = require("./src/parser");
 const state = require("./src/state");
 const logic = require("./src/logic");
 const ARCHIVE_RESET_PIN = "1234";
+const FAMILY_MAP_RESET_PIN = "123456";
 const HISTORY_CLUES_FILE = path.join(__dirname, "data", "history-clues.json");
 const TREE_LAYOUT_FILE = path.join(__dirname, "data", "tree-layout.json");
 const CANDLES_FILE = path.join(__dirname, "data", "candles.json");
@@ -1039,10 +1040,15 @@ app.post("/webhook", (req, res) => {
 
     if (parsed.normalized.event_type === "candle_details") {
       const candleResult = upsertCandle(parsed);
+      const birthResult = state.observeObBirthFromCandle(parsed);
       const reactionResult = state.observeObReactionFromCandle(parsed);
 
       if (!candleResult.ok) {
         return res.status(400).json(candleResult);
+      }
+
+      if (birthResult && !birthResult.ok) {
+        console.log(`[OB BIRTH] Not observed: ${birthResult.error}`);
       }
 
       if (reactionResult && !reactionResult.ok) {
@@ -1053,6 +1059,7 @@ app.post("/webhook", (req, res) => {
         ok: true,
         storedAs: "candle",
         candle: candleResult.candle,
+        obBirthUpdated: birthResult?.updated || 0,
         obReactionUpdated: reactionResult?.updated || 0
       });
     }
@@ -1062,6 +1069,14 @@ app.post("/webhook", (req, res) => {
 
       if (obBoxResult && !obBoxResult.ok) {
         console.log(`[OB BOX] Not stored: ${obBoxResult.error}`);
+      }
+    }
+
+    if (parsed.normalized.event_type === "structure_detected") {
+      const eyeOpenerResult = state.storeEyeOpenerFromEvent(parsed);
+
+      if (eyeOpenerResult && !eyeOpenerResult.ok) {
+        console.log(`[EYE OPENER] Not stored: ${eyeOpenerResult.error}`);
       }
     }
 
@@ -1426,32 +1441,59 @@ app.post("/archive-reset", (req, res) => {
       });
     }
 
-    const archiveResult = state.archiveCurrentState();
-
-    if (!archiveResult.ok) {
-      return res.status(500).json({
-        ok: false,
-        error: "Failed to archive current state"
-      });
-    }
-
-    const resetResult = state.resetActiveState();
+    const resetResult = state.resetRawEvents();
 
     if (!resetResult.ok) {
       return res.status(500).json({
         ok: false,
-        error: "Failed to reset active state"
+        error: "Failed to archive and reset raw alerts"
       });
     }
 
     res.status(200).json({
       ok: true,
-      message: "Current state archived and active state reset",
-      archiveFile: archiveResult.archiveFile,
-      preservedSetupKeys: resetResult.preservedSetupKeys || []
+      message: "Raw alerts archived and reset. Family map clues were preserved.",
+      archiveFile: resetResult.archiveFile,
+      archivedCount: resetResult.archivedCount || 0
     });
   } catch (error) {
-    console.error("[ARCHIVE RESET ERROR]", error.message);
+    console.error("[RAW ALERT ARCHIVE RESET ERROR]", error.message);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.post("/family-map-reset", (req, res) => {
+  try {
+    const { pin } = req.body || {};
+
+    if (pin !== FAMILY_MAP_RESET_PIN) {
+      return res.status(403).json({
+        ok: false,
+        error: "Invalid family map reset PIN"
+      });
+    }
+
+    const resetResult = state.resetFamilyMapClues();
+
+    if (!resetResult.ok) {
+      return res.status(500).json({
+        ok: false,
+        error: "Failed to reset family map clues"
+      });
+    }
+
+    writeHistoryClues([]);
+
+    res.status(200).json({
+      ok: true,
+      message: "Family map clues and saved history clues reset. Candles and chart data were preserved."
+    });
+  } catch (error) {
+    console.error("[FAMILY MAP RESET ERROR]", error.message);
 
     res.status(500).json({
       ok: false,

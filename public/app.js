@@ -299,19 +299,118 @@ function formatObRange(item) {
   return `${item.low ?? "?"} - ${item.high ?? "?"}`;
 }
 
+function shortId(value) {
+  const text = String(value || "unknown");
+  return text.length > 24 ? `${text.slice(0, 12)}...${text.slice(-8)}` : text;
+}
+
+function formatCount(value) {
+  return String(Number.isFinite(Number(value)) ? Number(value) : 0);
+}
+
+function reactionWatchCount(watch) {
+  return Array.isArray(watch?.candlesCollected) ? watch.candlesCollected.length : 0;
+}
+
+function obLatestTime(box) {
+  return (
+    box.updated_at ||
+    box.last_tapped_at ||
+    box.lastTapAt ||
+    box.eyeOpenerAt ||
+    box.created_at ||
+    box.bar_time ||
+    0
+  );
+}
+
+function obGroupKey(box) {
+  if (box.archived === true || box.status === "invalidated") {
+    return "archived";
+  }
+
+  if (box.status === "liquidity_engineering_active") {
+    return "liquidity";
+  }
+
+  if (box.tapped || box.status === "tapped_pending_reaction") {
+    return "tapped";
+  }
+
+  return "active";
+}
+
+function obGroupLabel(key) {
+  if (key === "liquidity") return "Liquidity Engineering OBs";
+  if (key === "tapped") return "Tapped / Pending Reaction OBs";
+  if (key === "archived") return "Invalidated / Archived OBs";
+  return "Active OBs";
+}
+
+function renderObField(label, value) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "none")}</strong></div>`;
+}
+
 function renderObBoxCard(box) {
   const tappedLabel = box.tapped ? `tapped x${box.tap_count || 1}` : "waiting";
+  const birthWatch = box.birthWatch || {};
+  const birthCount = Array.isArray(birthWatch.candlesCollected)
+    ? birthWatch.candlesCollected.length
+    : 0;
+  const provisional = box.provisionalDirection || birthWatch.provisionalDirection || "none";
+  const confidence = box.directionConfidence || birthWatch.confidence || "none";
+  const source = box.directionSource || (provisional !== "none" ? "birth_candles" : "none");
+  const reactionHistoryCount = Array.isArray(box.reactionHistory)
+    ? box.reactionHistory.length
+    : 0;
+  const reactionWatch = box.reactionWatch || null;
+  const activeState = box.archived ? "archived" : box.active === false ? "inactive" : "active";
+  const statusClass = tokenClass("ob-status", box.status || "active");
 
   return `
-    <article class="raw-card ob-box-card">
+    <article class="raw-card ob-box-card ${escapeHtml(statusClass)}">
       <div class="note-card-head">
-        <h3>${escapeHtml(box.symbol || "unknown")} ${escapeHtml(box.timeframe || "unknown")}</h3>
-        <span class="role-pill">${escapeHtml(tappedLabel)}</span>
+        <div>
+          <h3>${escapeHtml(box.symbol || "unknown")} ${escapeHtml(box.timeframe || "unknown")}</h3>
+          <p class="muted ob-short-id">${escapeHtml(shortId(box.id))}</p>
+        </div>
+        <span class="role-pill">${escapeHtml(box.status || tappedLabel)}</span>
       </div>
-      <p class="muted">${escapeHtml(box.id || "unknown")}</p>
-      <p class="ohlc-line">Range ${escapeHtml(formatObRange(box))}</p>
-      <p class="ohlc-line">O ${escapeHtml(box.open ?? "?")} / H ${escapeHtml(box.high ?? "?")} / L ${escapeHtml(box.low ?? "?")} / C ${escapeHtml(box.close ?? "?")}</p>
-      <p class="muted">Bar ${escapeHtml(formatTimestamp(box.bar_time))} · Source ${escapeHtml(box.source_event || "zone_created")}</p>
+      <p class="ohlc-line">Range ${escapeHtml(box.low ?? "?")} → ${escapeHtml(box.high ?? "?")}</p>
+      <div class="ob-story-grid">
+        ${renderObField("State", `${box.status || "active"} / ${activeState}`)}
+        ${renderObField("Created", formatTimestamp(box.bar_time))}
+        ${renderObField("Direction", box.direction || "unknown")}
+        ${renderObField("Birth", `${birthWatch.status || "none"} · ${birthCount}/${birthWatch.requiredCandles || 3}`)}
+        ${renderObField("Provisional", `${provisional} / ${confidence}`)}
+        ${renderObField("Source", source)}
+        ${renderObField("Birth reason", birthWatch.reason || "none")}
+        ${renderObField("Story", box.storyStatus || "neutral")}
+        ${renderObField("Eye opener", `${box.eyeOpenerType || "none"} / ${box.eyeOpenerDirection || "none"}`)}
+        ${renderObField("Eye time", box.eyeOpenerAt ? formatTimestamp(box.eyeOpenerAt) : "none")}
+        ${renderObField("Taps", `${formatCount(box.tapCount ?? box.tap_count)} · last ${formatTimestamp(box.lastTapAt || box.last_tapped_at)}`)}
+        ${renderObField("Reaction", reactionWatch ? `${reactionWatch.status || "watching"} · ${reactionWatchCount(reactionWatch)} candles` : "none")}
+        ${renderObField("Reaction tap", reactionWatch?.tapBarTime ? formatTimestamp(reactionWatch.tapBarTime) : "none")}
+        ${renderObField("Reaction verdict", reactionWatch?.verdict || "none")}
+        ${renderObField("History", `${reactionHistoryCount} previous cycle${reactionHistoryCount === 1 ? "" : "s"}`)}
+      </div>
+    </article>
+  `;
+}
+
+function renderEyeOpenerCard(eyeOpener) {
+  const linkedCount = Array.isArray(eyeOpener.linkedObIds)
+    ? eyeOpener.linkedObIds.length
+    : 0;
+
+  return `
+    <article class="raw-card">
+      <div class="note-card-head">
+        <h3>${escapeHtml(eyeOpener.symbol || "unknown")} ${escapeHtml(eyeOpener.timeframe || "unknown")}</h3>
+        <span class="role-pill">${escapeHtml(humanize(eyeOpener.structureType))}</span>
+      </div>
+      <p class="muted">${escapeHtml(humanize(eyeOpener.direction))} · ${escapeHtml(eyeOpener.eventRaw || "structure")}</p>
+      <p class="muted">Eye opened ${escapeHtml(formatTimestamp(eyeOpener.barTime))} · linked ${escapeHtml(String(linkedCount))} OB clue${linkedCount === 1 ? "" : "s"}</p>
     </article>
   `;
 }
@@ -328,17 +427,43 @@ function renderTapMatchCard(match) {
         <h3>${escapeHtml(humanize(match.result))}</h3>
         <span class="role-pill">${escapeHtml(tap.symbol || "unknown")} ${escapeHtml(tap.timeframe || "unknown")}</span>
       </div>
+      <p class="muted">Event ${escapeHtml(tap.event_raw || "ob_tap")}</p>
       <p class="ohlc-line">Tap range ${escapeHtml(formatObRange(tap))}</p>
       <p class="muted">Matched OB ids: ${escapeHtml(ids)}</p>
-      <p class="muted">Created ${escapeHtml(formatTimestamp(match.created_at))}</p>
+      <p class="muted">Tap time ${escapeHtml(formatTimestamp(tap.bar_time || tap.alert_time || tap.received_at))} · Created ${escapeHtml(formatTimestamp(match.created_at))}</p>
     </article>
   `;
 }
 
+function renderObBoxGroups(boxes) {
+  const orderedGroups = ["active", "liquidity", "tapped", "archived"];
+  const groups = boxes.reduce((acc, box) => {
+    const key = obGroupKey(box);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(box);
+    return acc;
+  }, {});
+
+  return orderedGroups
+    .filter((key) => Array.isArray(groups[key]) && groups[key].length)
+    .map((key) => {
+      const cards = groups[key]
+        .slice()
+        .sort((a, b) => new Date(obLatestTime(b) || 0) - new Date(obLatestTime(a) || 0))
+        .map(renderObBoxCard)
+        .join("");
+
+      return `<section class="ob-group"><h4>${escapeHtml(obGroupLabel(key))} <span>${escapeHtml(String(groups[key].length))}</span></h4>${cards}</section>`;
+    })
+    .join("");
+}
+
 function renderObTapMonitor() {
   const boxList = document.getElementById("ob-box-list");
+  const eyeOpenerList = document.getElementById("eye-opener-list");
   const matchList = document.getElementById("tap-match-list");
   const boxes = Array.isArray(appState.engine?.obBoxes) ? appState.engine.obBoxes : [];
+  const eyeOpeners = Array.isArray(appState.engine?.eyeOpeners) ? appState.engine.eyeOpeners : [];
   const matches = Array.isArray(appState.engine?.tapMatches) ? appState.engine.tapMatches : [];
 
   if (boxList) {
@@ -347,12 +472,17 @@ function renderObTapMonitor() {
       boxList.textContent = "No stored OB boxes yet.";
     } else {
       boxList.classList.remove("empty-state");
-      boxList.innerHTML = boxes
-        .slice()
-        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
-        .slice(0, 20)
-        .map(renderObBoxCard)
-        .join("");
+      boxList.innerHTML = renderObBoxGroups(boxes.slice(0, 60));
+    }
+  }
+
+  if (eyeOpenerList) {
+    if (!eyeOpeners.length) {
+      eyeOpenerList.classList.add("empty-state");
+      eyeOpenerList.textContent = "No eye openers yet.";
+    } else {
+      eyeOpenerList.classList.remove("empty-state");
+      eyeOpenerList.innerHTML = eyeOpeners.slice(0, 20).map(renderEyeOpenerCard).join("");
     }
   }
 
@@ -1460,14 +1590,14 @@ function setupArchiveResetControl() {
   if (!button) return;
 
   button.addEventListener("click", async () => {
-    const pin = window.prompt("Enter archive reset PIN to continue:");
+    const pin = window.prompt("Enter raw alert archive reset PIN to continue:");
 
     if (pin === null) {
       if (status) status.textContent = "Cancelled.";
       return;
     }
 
-    if (status) status.textContent = "Archiving and resetting active state...";
+    if (status) status.textContent = "Archiving and resetting raw alerts...";
     button.disabled = true;
 
     try {
@@ -1480,17 +1610,57 @@ function setupArchiveResetControl() {
       const data = await res.json();
 
       if (!res.ok || !data.ok) {
-        throw new Error(data.error || "Archive reset failed");
+        throw new Error(data.error || "Raw alert archive reset failed");
       }
 
       if (status) {
-        const preservedCount = Array.isArray(data.preservedSetupKeys) ? data.preservedSetupKeys.length : 0;
-        status.textContent = "Archived and reset. " + preservedCount + " protected setup(s) preserved.";
+        status.textContent = "Raw alerts archived and reset. " + String(data.archivedCount || 0) + " alert(s) archived.";
       }
 
       await loadAll();
     } catch (error) {
-      console.error("Archive reset failed:", error);
+      console.error("Raw alert archive reset failed:", error);
+      if (status) status.textContent = "Failed: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function setupFamilyMapResetControl() {
+  const button = document.getElementById("family-map-reset-btn");
+  const status = document.getElementById("family-map-reset-status");
+  if (!button) return;
+
+  button.addEventListener("click", async () => {
+    const pin = window.prompt("Enter family map reset PIN to continue:");
+
+    if (pin === null) {
+      if (status) status.textContent = "Cancelled.";
+      return;
+    }
+
+    if (status) status.textContent = "Resetting family map clues...";
+    button.disabled = true;
+
+    try {
+      const res = await fetch("/family-map-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pin })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Family map reset failed");
+      }
+
+      if (status) status.textContent = "Family map and saved history clues reset. Candles and Chart Lab data preserved.";
+
+      await loadAll();
+    } catch (error) {
+      console.error("Family map reset failed:", error);
       if (status) status.textContent = "Failed: " + error.message;
     } finally {
       button.disabled = false;
@@ -1534,6 +1704,7 @@ setupViewModeControls();
 setupTfcViewControls();
 setupHistoryForm();
 setupArchiveResetControl();
+setupFamilyMapResetControl();
 setupTeachingForm();
 updateClock();
 Promise.all([loadTreeLayout(), loadAll()]).catch((error) => {

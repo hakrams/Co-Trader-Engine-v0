@@ -5,6 +5,7 @@ const { getFinalDecision } = require("./logic");
 
 const STATE_FILE = path.join(__dirname, "..", "data", "engine-state.json");
 const ARCHIVE_DIR = path.join(__dirname, "..", "data", "archive");
+const RAW_EVENT_LIMIT = 500;
 
 function createDefaultScoring() {
   return {
@@ -406,6 +407,24 @@ function normalizeMarketTimeframe(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeReactionWatchHistoryItem(watch) {
+  if (!watch || typeof watch !== "object") {
+    return null;
+  }
+
+  return {
+    ...watch,
+    archivedAt: watch.archivedAt || watch.archived_at || null,
+    replacedByTapId: watch.replacedByTapId || watch.replaced_by_tap_id || null,
+    candlesCollected: Array.isArray(watch.candlesCollected)
+      ? watch.candlesCollected
+      : [],
+    candlesCollectedCount: Array.isArray(watch.candlesCollected)
+      ? watch.candlesCollected.length
+      : 0
+  };
+}
+
 function normalizeObBoxRecord(box) {
   if (!box || typeof box !== "object") {
     return null;
@@ -432,7 +451,52 @@ function normalizeObBoxRecord(box) {
     volume: Number.isFinite(Number(box.volume)) ? Number(box.volume) : null,
     source_event: box.source_event || box.sourceEvent || "zone_created",
     raw_source_event: box.raw_source_event || box.rawSourceEvent || null,
-    direction: "unknown",
+    direction: box.direction || "unknown",
+    provisionalDirection: box.provisionalDirection || null,
+    directionConfidence: box.directionConfidence || "none",
+    directionSource: box.directionSource || null,
+    storyStatus: box.storyStatus || null,
+    eyeOpener:
+      box.eyeOpener && typeof box.eyeOpener === "object"
+        ? {
+            id: box.eyeOpener.id || null,
+            structureType: box.eyeOpener.structureType || null,
+            direction: box.eyeOpener.direction || null,
+            eventRaw: box.eyeOpener.eventRaw || box.eyeOpener.event_raw || null,
+            barTime: box.eyeOpener.barTime || box.eyeOpener.bar_time || null,
+            alertTime: box.eyeOpener.alertTime || box.eyeOpener.alert_time || null
+          }
+        : null,
+    eyeOpenerId: box.eyeOpenerId || box.eye_opener_id || null,
+    eyeOpenerType: box.eyeOpenerType || box.eye_opener_type || null,
+    eyeOpenerDirection: box.eyeOpenerDirection || box.eye_opener_direction || null,
+    eyeOpenerAt: box.eyeOpenerAt || box.eye_opener_at || null,
+    storyNotes: Array.isArray(box.storyNotes)
+      ? box.storyNotes
+      : Array.isArray(box.story_notes)
+        ? box.story_notes
+        : [],
+    clueNotes: Array.isArray(box.clueNotes)
+      ? box.clueNotes
+      : Array.isArray(box.clue_notes)
+        ? box.clue_notes
+        : [],
+    birthWatch:
+      box.birthWatch && typeof box.birthWatch === "object"
+        ? {
+            ...box.birthWatch,
+            candlesCollected: Array.isArray(box.birthWatch.candlesCollected)
+              ? box.birthWatch.candlesCollected
+              : [],
+            requiredCandles: Number.isFinite(Number(box.birthWatch.requiredCandles))
+              ? Number(box.birthWatch.requiredCandles)
+              : 3,
+            status: box.birthWatch.status || "watching",
+            provisionalDirection: box.birthWatch.provisionalDirection || null,
+            confidence: box.birthWatch.confidence || "none",
+            reason: box.birthWatch.reason || null
+          }
+        : null,
     status: box.status || "active",
     active: box.active === false ? false : true,
     archived: box.archived === true,
@@ -459,6 +523,11 @@ function normalizeObBoxRecord(box) {
               : 0
           }
         : null,
+    reactionHistory: Array.isArray(box.reactionHistory)
+      ? box.reactionHistory.map(normalizeReactionWatchHistoryItem).filter(Boolean)
+      : Array.isArray(box.reaction_history)
+        ? box.reaction_history.map(normalizeReactionWatchHistoryItem).filter(Boolean)
+        : [],
     tap_events: Array.isArray(box.tap_events)
       ? box.tap_events
       : Array.isArray(box.tapEvents)
@@ -521,6 +590,50 @@ function ensureTapMatches(matches) {
   return matches
     .map(normalizeTapMatchRecord)
     .filter((match) => match && match.id)
+    .slice(0, 1000);
+}
+
+function normalizeEyeOpenerRecord(eyeOpener) {
+  if (!eyeOpener || typeof eyeOpener !== "object") {
+    return null;
+  }
+
+  const structureType = String(eyeOpener.structureType || "").trim().toLowerCase();
+  const direction = String(eyeOpener.direction || "").trim().toLowerCase();
+
+  if (!["choch", "bos"].includes(structureType)) {
+    return null;
+  }
+
+  return {
+    id:
+      typeof eyeOpener.id === "string" && eyeOpener.id.trim()
+        ? eyeOpener.id.trim()
+        : null,
+    eventRaw: eyeOpener.eventRaw || eyeOpener.event_raw || null,
+    structureType,
+    direction: ["bullish", "bearish"].includes(direction) ? direction : "unknown",
+    symbol: normalizeMarketSymbol(eyeOpener.symbol),
+    timeframe: normalizeMarketTimeframe(eyeOpener.timeframe),
+    barTime: eyeOpener.barTime || eyeOpener.bar_time || null,
+    alertTime: eyeOpener.alertTime || eyeOpener.alert_time || null,
+    createdAt: eyeOpener.createdAt || eyeOpener.created_at || null,
+    linkedObIds: Array.isArray(eyeOpener.linkedObIds)
+      ? eyeOpener.linkedObIds
+      : Array.isArray(eyeOpener.linked_ob_ids)
+        ? eyeOpener.linked_ob_ids
+        : []
+  };
+}
+
+function ensureEyeOpeners(eyeOpeners) {
+  if (!Array.isArray(eyeOpeners)) {
+    return [];
+  }
+
+  return eyeOpeners
+    .map(normalizeEyeOpenerRecord)
+    .filter((eyeOpener) => eyeOpener && eyeOpener.id && eyeOpener.symbol && eyeOpener.timeframe)
     .slice(0, 1000);
 }
 
@@ -1594,6 +1707,7 @@ const defaultState = {
   history: [],
   obBoxes: [],
   tapMatches: [],
+  eyeOpeners: [],
   setups: {},
   rawEvents: [],
   latestRawEvent: null,
@@ -1637,6 +1751,7 @@ function loadStateFromFile() {
       history: Array.isArray(parsed.history) ? parsed.history : [],
       obBoxes: ensureObBoxes(parsed.obBoxes),
       tapMatches: ensureTapMatches(parsed.tapMatches),
+      eyeOpeners: ensureEyeOpeners(parsed.eyeOpeners),
       setups: safeSetups,
       rawEvents: Array.isArray(parsed.rawEvents) ? parsed.rawEvents : [],
       latestRawEvent: parsed.latestRawEvent ?? null,
@@ -1702,6 +1817,42 @@ function archiveCurrentState() {
     };
   } catch (error) {
     console.error("[ARCHIVE SAVE ERROR]", error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+function archiveRawEvents(reason = "manual_raw_alert_archive") {
+  try {
+    ensureArchiveDir();
+
+    const rawEvents = Array.isArray(state.rawEvents) ? state.rawEvents : [];
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const archiveFile = path.join(ARCHIVE_DIR, `raw-events-${timestamp}.json`);
+
+    const archivePayload = {
+      archivedAt: new Date().toISOString(),
+      reason,
+      count: rawEvents.length,
+      latestRawEvent: state.latestRawEvent || null,
+      rawEvents
+    };
+
+    fs.writeFileSync(
+      archiveFile,
+      JSON.stringify(archivePayload, null, 2),
+      "utf8"
+    );
+
+    return {
+      ok: true,
+      archiveFile,
+      count: rawEvents.length
+    };
+  } catch (error) {
+    console.error("[RAW EVENTS ARCHIVE SAVE ERROR]", error.message);
     return {
       ok: false,
       error: error.message
@@ -1782,6 +1933,7 @@ function resetActiveState() {
   state.history = [];
   state.obBoxes = [];
   state.tapMatches = [];
+  state.eyeOpeners = [];
   state.setups = protectedSetups;
   state.rawEvents = [];
   state.latestRawEvent = null;
@@ -1791,6 +1943,41 @@ function resetActiveState() {
   return {
     ok: true,
     preservedSetupKeys: Object.keys(protectedSetups)
+  };
+}
+
+function resetFamilyMapClues() {
+  state.latestEvent = null;
+  state.notificationSnapshots = createDefaultNotificationSnapshots();
+  state.history = [];
+  state.obBoxes = [];
+  state.tapMatches = [];
+  state.eyeOpeners = [];
+  state.setups = {};
+
+  saveStateToFile();
+
+  return {
+    ok: true
+  };
+}
+
+function resetRawEvents() {
+  const archiveResult = archiveRawEvents("manual_raw_alert_reset");
+
+  if (!archiveResult.ok) {
+    return archiveResult;
+  }
+
+  state.rawEvents = [];
+  state.latestRawEvent = null;
+
+  saveStateToFile();
+
+  return {
+    ok: true,
+    archiveFile: archiveResult.archiveFile,
+    archivedCount: archiveResult.count
   };
 }
 
@@ -2277,11 +2464,22 @@ function addRawEvent(payload) {
     payload
   };
 
+  if (state.rawEvents.length >= RAW_EVENT_LIMIT) {
+    const archiveResult = archiveRawEvents("raw_event_limit_rotation");
+
+    if (archiveResult.ok) {
+      state.rawEvents = [];
+      state.latestRawEvent = null;
+    } else {
+      state.rawEvents = state.rawEvents.slice(0, RAW_EVENT_LIMIT - 1);
+    }
+  }
+
   state.latestRawEvent = entry;
   state.rawEvents.unshift(entry);
 
-  if (state.rawEvents.length > 500) {
-    state.rawEvents = state.rawEvents.slice(0, 500);
+  if (state.rawEvents.length > RAW_EVENT_LIMIT) {
+    state.rawEvents = state.rawEvents.slice(0, RAW_EVENT_LIMIT);
   }
 
   saveStateToFile();
@@ -2333,6 +2531,21 @@ function createObBoxId(parsed) {
     highPart,
     lowPart
   ].join("_");
+}
+
+function createBirthWatch(obBox) {
+  const now = new Date().toISOString();
+
+  return {
+    startedAt: now,
+    obBarTime: obBox.bar_time || now,
+    candlesCollected: [],
+    requiredCandles: 3,
+    status: "watching",
+    provisionalDirection: null,
+    confidence: "none",
+    reason: null
+  };
 }
 
 function storeObBoxFromEvent(parsed) {
@@ -2387,6 +2600,17 @@ function storeObBoxFromEvent(parsed) {
     source_event: "zone_created",
     raw_source_event: event.event_raw || null,
     direction: "unknown",
+    provisionalDirection: null,
+    directionConfidence: "none",
+    directionSource: null,
+    storyStatus: null,
+    eyeOpener: null,
+    eyeOpenerId: null,
+    eyeOpenerType: null,
+    eyeOpenerDirection: null,
+    eyeOpenerAt: null,
+    storyNotes: [],
+    clueNotes: [],
     status: "active",
     active: true,
     archived: false,
@@ -2395,7 +2619,9 @@ function storeObBoxFromEvent(parsed) {
     tapCount: 0,
     lastTapAt: null,
     priority: null,
+    birthWatch: null,
     reactionWatch: null,
+    reactionHistory: [],
     tap_events: [],
     matched_tap_ids: [],
     created_at: now,
@@ -2403,6 +2629,7 @@ function storeObBoxFromEvent(parsed) {
     updated_at: now,
     last_tapped_at: null
   };
+  obBox.birthWatch = createBirthWatch(obBox);
 
   state.obBoxes = ensureObBoxes([...ensureObBoxes(state.obBoxes), obBox]);
   saveStateToFile();
@@ -2414,19 +2641,189 @@ function storeObBoxFromEvent(parsed) {
   };
 }
 
+function createEyeOpenerId(parsed) {
+  const event = parsed?.normalized || {};
+  const rawTime = getNormalizedEventTimestamp(parsed) || new Date().toISOString();
+
+  return [
+    "eye",
+    normalizeMarketSymbol(event.symbol),
+    normalizeMarketTimeframe(event.timeframe),
+    event.structure_type || "structure",
+    event.direction || "unknown",
+    String(rawTime).replace(/[^0-9a-z]/gi, ""),
+    String(parsed?.raw?.received_at || Date.now()).replace(/[^0-9a-z]/gi, "")
+  ].join("_");
+}
+
+function createEyeOpenerRecord(parsed) {
+  const event = parsed?.normalized || {};
+  const barTime = getNormalizedEventTimestamp(parsed) || new Date().toISOString();
+  const now = new Date().toISOString();
+
+  return {
+    id: createEyeOpenerId(parsed),
+    eventRaw: event.event_raw || null,
+    structureType: event.structure_type || null,
+    direction: event.direction || "unknown",
+    symbol: normalizeMarketSymbol(event.symbol),
+    timeframe: normalizeMarketTimeframe(event.timeframe),
+    barTime: toIsoOrNow(barTime),
+    alertTime: event.times?.alert_time || null,
+    createdAt: now,
+    linkedObIds: []
+  };
+}
+
+function storeEyeOpenerFromEvent(parsed) {
+  const event = parsed?.normalized || {};
+
+  if (
+    event.event_type !== "structure_detected" ||
+    !["choch", "bos"].includes(event.structure_type)
+  ) {
+    return null;
+  }
+
+  const eyeOpener = createEyeOpenerRecord(parsed);
+
+  if (!eyeOpener.symbol || !eyeOpener.timeframe || !eyeOpener.barTime) {
+    return {
+      ok: false,
+      error: "Eye opener needs symbol, timeframe, structure type, and bar_time/timestamp."
+    };
+  }
+
+  const eyeOpenerMs = new Date(eyeOpener.barTime).getTime();
+  const linkedObIds = [];
+  const note = "OB existed before CHoCH/BOS eye opener.";
+
+  state.obBoxes = ensureObBoxes(state.obBoxes).map((box) => {
+    const obTimeMs = new Date(box.bar_time || 0).getTime();
+
+    if (
+      box.symbol !== eyeOpener.symbol ||
+      box.timeframe !== eyeOpener.timeframe ||
+      box.active === false ||
+      box.archived === true ||
+      box.status === "invalidated" ||
+      box.eyeOpenerId ||
+      !Number.isFinite(obTimeMs) ||
+      !Number.isFinite(eyeOpenerMs) ||
+      obTimeMs >= eyeOpenerMs
+    ) {
+      return box;
+    }
+
+    linkedObIds.push(box.id);
+
+    return {
+      ...box,
+      storyStatus: "awakened",
+      eyeOpener: {
+        id: eyeOpener.id,
+        structureType: eyeOpener.structureType,
+        direction: eyeOpener.direction,
+        eventRaw: eyeOpener.eventRaw,
+        barTime: eyeOpener.barTime,
+        alertTime: eyeOpener.alertTime
+      },
+      eyeOpenerId: eyeOpener.id,
+      eyeOpenerType: eyeOpener.structureType,
+      eyeOpenerDirection: eyeOpener.direction,
+      eyeOpenerAt: eyeOpener.barTime,
+      storyNotes: [...new Set([...(box.storyNotes || []), note])],
+      clueNotes: [...new Set([...(box.clueNotes || []), note])],
+      updated_at: new Date().toISOString()
+    };
+  });
+
+  const storedEyeOpener = {
+    ...eyeOpener,
+    linkedObIds
+  };
+
+  state.eyeOpeners = ensureEyeOpeners([
+    storedEyeOpener,
+    ...ensureEyeOpeners(state.eyeOpeners)
+  ]);
+
+  saveStateToFile();
+
+  return {
+    ok: true,
+    eyeOpener: storedEyeOpener,
+    linkedObIds
+  };
+}
+
 function rangesOverlap(tapRange, obBox) {
   return tapRange.high >= obBox.low && tapRange.low <= obBox.high;
 }
 
-function createReactionWatch(tapEvent) {
+function getReactionDirectionBasis(obBox) {
+  const eyeOpenerDirection = String(obBox?.eyeOpenerDirection || "").toLowerCase();
+
+  if (["bullish", "bearish"].includes(eyeOpenerDirection)) {
+    return {
+      direction: eyeOpenerDirection,
+      source: "eye_opener"
+    };
+  }
+
+  const provisionalDirection = String(obBox?.provisionalDirection || "").toLowerCase();
+
+  if (["bullish", "bearish"].includes(provisionalDirection)) {
+    return {
+      direction: provisionalDirection,
+      source: "birth_watch"
+    };
+  }
+
+  return {
+    direction: "unknown",
+    source: "none"
+  };
+}
+
+function createReactionWatch(tapEvent, obBox = null) {
   return {
     tapBarTime: tapEvent.bar_time || tapEvent.alert_time || tapEvent.received_at || new Date().toISOString(),
     candlesCollected: [],
     minCandles: 3,
     maxCandles: 10,
     status: "watching",
-    verdict: null
+    verdict: null,
+    reason: null,
+    directionBasis: getReactionDirectionBasis(obBox)
   };
+}
+
+function archiveReactionWatchForNewTap(box, tapEvent, matchId) {
+  const existingWatch = box?.reactionWatch;
+  const existingHistory = Array.isArray(box?.reactionHistory)
+    ? box.reactionHistory
+    : [];
+
+  if (!existingWatch || typeof existingWatch !== "object") {
+    return existingHistory;
+  }
+
+  return [
+    ...existingHistory,
+    {
+      ...existingWatch,
+      archivedAt: new Date().toISOString(),
+      replacedByTapId: matchId,
+      replacedByTapBarTime: tapEvent.bar_time || tapEvent.alert_time || tapEvent.received_at || null,
+      candlesCollected: Array.isArray(existingWatch.candlesCollected)
+        ? existingWatch.candlesCollected
+        : [],
+      candlesCollectedCount: Array.isArray(existingWatch.candlesCollected)
+        ? existingWatch.candlesCollected.length
+        : 0
+    }
+  ].slice(-20);
 }
 
 function createTapEventRecord(parsed) {
@@ -2507,6 +2904,8 @@ function matchObTapFromEvent(parsed) {
         return box;
       }
 
+      const reactionHistory = archiveReactionWatchForNewTap(box, tapEvent, match.id);
+
       return {
         ...box,
         status: "tapped_pending_reaction",
@@ -2516,7 +2915,8 @@ function matchObTapFromEvent(parsed) {
         tap_count: Number(box.tap_count || 0) + 1,
         tapCount: Number(box.tapCount || box.tap_count || 0) + 1,
         lastTapAt: tapEvent.bar_time || tapEvent.alert_time || tapEvent.received_at || now,
-        reactionWatch: createReactionWatch(tapEvent),
+        reactionWatch: createReactionWatch(tapEvent, box),
+        reactionHistory,
         tap_events: [...(box.tap_events || []), tapEvent].slice(-20),
         matched_tap_ids: [...new Set([...(box.matched_tap_ids || []), match.id])],
         updated_at: now,
@@ -2568,32 +2968,161 @@ function buildReactionCandle(parsed) {
   };
 }
 
-function getObReactionSide(obBox) {
-  const direction = String(obBox.direction || "unknown").toLowerCase();
+function inferBirthDirection(obBox, candlesCollected) {
+  const requiredCandles = Number(obBox.birthWatch?.requiredCandles || 3);
+  const candles = candlesCollected.slice(0, requiredCandles);
+  const firstClose = Number(candles[0]?.close);
+  const lastClose = Number(candles[candles.length - 1]?.close);
+  const highs = candles.map((candle) => Number(candle.high));
+  const lows = candles.map((candle) => Number(candle.low));
+  const maxHigh = Math.max(...highs);
+  const minLow = Math.min(...lows);
 
-  if (direction === "demand" || direction === "bullish") {
-    return "demand";
+  if (
+    Number.isFinite(firstClose) &&
+    Number.isFinite(lastClose) &&
+    Number.isFinite(maxHigh) &&
+    lastClose > firstClose &&
+    maxHigh > Number(obBox.high)
+  ) {
+    return {
+      provisionalDirection: "bullish",
+      confidence: "medium",
+      reason: "birth_candles_pushed_up_after_ob"
+    };
   }
 
-  if (direction === "supply" || direction === "bearish") {
-    return "supply";
+  if (
+    Number.isFinite(firstClose) &&
+    Number.isFinite(lastClose) &&
+    Number.isFinite(minLow) &&
+    lastClose < firstClose &&
+    minLow < Number(obBox.low)
+  ) {
+    return {
+      provisionalDirection: "bearish",
+      confidence: "medium",
+      reason: "birth_candles_pushed_down_after_ob"
+    };
   }
 
-  return "unknown";
+  return {
+    provisionalDirection: "unclear",
+    confidence: "low",
+    reason: "birth_candles_no_clear_displacement"
+  };
+}
+
+function observeObBirthFromCandle(parsed) {
+  const candle = buildReactionCandle(parsed);
+
+  if (!candle) {
+    return {
+      ok: false,
+      updated: 0,
+      error: "Birth candle needs candle_details with symbol, timeframe, bar_time, high, low, and close."
+    };
+  }
+
+  let updated = 0;
+
+  state.obBoxes = ensureObBoxes(state.obBoxes).map((box) => {
+    const watch = box.birthWatch;
+
+    if (
+      !watch ||
+      watch.status !== "watching" ||
+      box.symbol !== candle.symbol ||
+      box.timeframe !== candle.timeframe ||
+      new Date(candle.barTime).getTime() <= new Date(watch.obBarTime).getTime()
+    ) {
+      return box;
+    }
+
+    const requiredCandles = Number(watch.requiredCandles || 3);
+    const candlesCollected = Array.isArray(watch.candlesCollected)
+      ? watch.candlesCollected
+      : [];
+
+    if (
+      candlesCollected.length >= requiredCandles ||
+      candlesCollected.some((item) => item.barTime === candle.barTime)
+    ) {
+      return box;
+    }
+
+    const nextCandles = [...candlesCollected, candle].slice(0, requiredCandles);
+    const nextWatch = {
+      ...watch,
+      candlesCollected: nextCandles
+    };
+    const nextBox = {
+      ...box,
+      birthWatch: nextWatch,
+      updated_at: new Date().toISOString()
+    };
+
+    updated += 1;
+
+    if (nextCandles.length < requiredCandles) {
+      return nextBox;
+    }
+
+    const directionResult = inferBirthDirection(nextBox, nextCandles);
+
+    return {
+      ...nextBox,
+      provisionalDirection: directionResult.provisionalDirection,
+      directionConfidence: directionResult.confidence,
+      directionSource: "birth_candles",
+      birthWatch: {
+        ...nextWatch,
+        status: "complete",
+        provisionalDirection: directionResult.provisionalDirection,
+        confidence: directionResult.confidence,
+        reason: directionResult.reason
+      }
+    };
+  });
+
+  if (updated > 0) {
+    saveStateToFile();
+  }
+
+  return {
+    ok: true,
+    updated
+  };
 }
 
 function candleOverlapsOb(candle, obBox) {
   return candle.high >= obBox.low && candle.low <= obBox.high;
 }
 
+function anyReactionCandleOverlapsOb(watch, obBox) {
+  const candlesCollected = Array.isArray(watch?.candlesCollected)
+    ? watch.candlesCollected
+    : [];
+
+  return candlesCollected.some((item) => candleOverlapsOb(item, obBox));
+}
+
 function applyReactionVerdict(obBox, candle) {
-  const side = getObReactionSide(obBox);
-  const watch = obBox.reactionWatch || createReactionWatch({ bar_time: candle.barTime });
+  const rawWatch = obBox.reactionWatch || createReactionWatch({ bar_time: candle.barTime }, obBox);
+  const directionBasis = rawWatch.directionBasis || getReactionDirectionBasis(obBox);
+  const watch = {
+    ...rawWatch,
+    directionBasis
+  };
+  const direction = directionBasis.direction || "unknown";
   const collectedCount = Array.isArray(watch.candlesCollected)
     ? watch.candlesCollected.length
     : 0;
+  const minCandles = Number(watch.minCandles || 3);
+  const maxCandles = Number(watch.maxCandles || 10);
+  const hasOverlap = anyReactionCandleOverlapsOb(watch, obBox);
 
-  if (side === "demand") {
+  if (direction === "bullish") {
     if (candle.close < obBox.low) {
       return {
         ...obBox,
@@ -2603,7 +3132,8 @@ function applyReactionVerdict(obBox, candle) {
         reactionWatch: {
           ...watch,
           status: "complete",
-          verdict: "invalidated"
+          verdict: "invalidated",
+          reason: "bullish_ob_closed_below_low"
         }
       };
     }
@@ -2617,13 +3147,16 @@ function applyReactionVerdict(obBox, candle) {
         reactionWatch: {
           ...watch,
           status: "complete",
-          verdict: highPriority ? "respected_high_priority" : "respected"
+          verdict: highPriority ? "respected_high_priority" : "respected",
+          reason: highPriority
+            ? "rejection_after_liquidity_build"
+            : "bullish_ob_rejected_above_high"
         }
       };
     }
   }
 
-  if (side === "supply") {
+  if (direction === "bearish") {
     if (candle.close > obBox.high) {
       return {
         ...obBox,
@@ -2633,7 +3166,8 @@ function applyReactionVerdict(obBox, candle) {
         reactionWatch: {
           ...watch,
           status: "complete",
-          verdict: "invalidated"
+          verdict: "invalidated",
+          reason: "bearish_ob_closed_above_high"
         }
       };
     }
@@ -2647,40 +3181,58 @@ function applyReactionVerdict(obBox, candle) {
         reactionWatch: {
           ...watch,
           status: "complete",
-          verdict: highPriority ? "respected_high_priority" : "respected"
+          verdict: highPriority ? "respected_high_priority" : "respected",
+          reason: highPriority
+            ? "rejection_after_liquidity_build"
+            : "bearish_ob_rejected_below_low"
         }
       };
     }
   }
 
-  if (collectedCount >= watch.minCandles && candleOverlapsOb(candle, obBox)) {
+  if (direction === "unknown" && collectedCount >= minCandles) {
+    return {
+      ...obBox,
+      status: "tapped_pending_reaction",
+      reactionWatch: {
+        ...watch,
+        status: "reaction_pending_direction",
+        verdict: "reaction_pending_direction",
+        reason: "reaction_direction_basis_unknown"
+      }
+    };
+  }
+
+  if (collectedCount >= maxCandles && hasOverlap) {
     return {
       ...obBox,
       status: "liquidity_engineering_active",
       reactionWatch: {
         ...watch,
-        status: collectedCount >= watch.maxCandles ? "max_window_complete" : "watching",
-        verdict: collectedCount >= watch.maxCandles ? "liquidity_engineering_active" : watch.verdict
+        status: "max_window_liquidity_engineering",
+        verdict: "liquidity_engineering_active",
+        reason: "price_holding_inside_ob_after_tap"
       }
     };
   }
 
-  if (side === "unknown" && collectedCount >= watch.maxCandles) {
+  if (collectedCount >= minCandles && hasOverlap) {
     return {
       ...obBox,
-      status:
-        obBox.status === "liquidity_engineering_active"
-          ? "liquidity_engineering_active"
-          : "reaction_pending_direction",
+      status: "liquidity_engineering_active",
       reactionWatch: {
         ...watch,
-        status: "max_window_complete",
-        verdict: obBox.status === "liquidity_engineering_active" ? "liquidity_engineering_active" : null
+        status: "liquidity_engineering_active",
+        verdict: "liquidity_engineering_active",
+        reason: "price_holding_inside_ob_after_tap"
       }
     };
   }
 
-  return obBox;
+  return {
+    ...obBox,
+    reactionWatch: watch
+  };
 }
 
 function observeObReactionFromCandle(parsed) {
@@ -2703,7 +3255,7 @@ function observeObReactionFromCandle(parsed) {
       !watch ||
       !["tapped_pending_reaction", "liquidity_engineering_active"].includes(box.status) ||
       watch.status === "complete" ||
-      watch.status === "max_window_complete" ||
+      watch.status === "max_window_liquidity_engineering" ||
       box.symbol !== candle.symbol ||
       box.timeframe !== candle.timeframe ||
       new Date(candle.barTime).getTime() <= new Date(watch.tapBarTime).getTime()
@@ -2890,6 +3442,7 @@ function getState() {
     notifications: ensureNotificationList(state.notifications),
     obBoxes: ensureObBoxes(state.obBoxes),
     tapMatches: ensureTapMatches(state.tapMatches),
+    eyeOpeners: ensureEyeOpeners(state.eyeOpeners),
     setups: safeSetups
   };
 }
@@ -2968,7 +3521,10 @@ module.exports = {
   getState,
   getReactions,
   archiveCurrentState,
+  archiveRawEvents,
   resetActiveState,
+  resetFamilyMapClues,
+  resetRawEvents,
   createDefaultNotificationSettings,
   ensureNotificationSettings,
   getPublicNotificationSettings,
@@ -3009,7 +3565,9 @@ module.exports = {
   createDefaultLiquidityEngineering,
   ensureSetupHasLiquidityEngineering,
   storeObBoxFromEvent,
+  storeEyeOpenerFromEvent,
   matchObTapFromEvent,
+  observeObBirthFromCandle,
   observeObReactionFromCandle,
   trackLiquidityEngineeringObTap,
   refreshLiquidityEngineeringForSetup,

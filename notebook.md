@@ -1,5 +1,22 @@
 # Co-Trader Engine V2 Working Notebook
 
+## Standing Memory Rule
+
+Markdown is project memory. Important implementation steps, tests, rule decisions, and future patch notes must be recorded in `.md` files, especially `.codex-notes/v2/v2-journal.md`, before a work item is considered finished.
+
+## Implemented Patch - OB Reaction History
+
+Implemented cleanup:
+
+- keep `reactionHistory: []` on each OB
+- when a repeated matched tap starts a fresh `reactionWatch`, move the previous `reactionWatch` into `reactionHistory` first
+- keep the newest `reactionWatch` as the active/current cycle
+- preserve prior max-window results, liquidity-engineering observations, and older reaction cycles after repeated taps
+
+Boundary:
+
+- do not infer direction or change respected/invalidated logic while adding this
+
 ## 2026-04-28 - OB Box Tap Matching Patch
 
 Implemented boundary:
@@ -213,3 +230,166 @@ Continuity note:
 - Akram is installing Playwright / Chromium so future Codex sessions can verify Chart Lab and dashboard behavior in a real browser
 - use Playwright for approved browser checks such as loading `http://127.0.0.1:4000/chartlab`, catching console errors, testing wheel zoom / drag behavior, and taking screenshots
 - do not assume browser verification is approved by default; ask Akram before running extra tests or making code changes, because he is trying to save credits
+
+## 2026-04-28 - Reset Button Boundaries
+
+Current reset split:
+
+- `Archive & Reset Raw Alerts` archives and clears only raw alerts
+- `Reset Family Map` clears live family/clue state, saved history clues, OB boxes, tap matches, and setups
+- neither reset clears Chart Lab candles
+
+Raw alert limit behavior:
+
+- raw alerts rotate automatically at 500 stored alerts
+- when the limit is reached, the current raw-alert batch is saved to `data/archive/`
+- the incoming alert starts a fresh raw-alert feed
+- this rotation must not wipe Family Map clues or candles
+
+Future close/archive idea:
+
+- per-family close should probably move a family into a review/archive layer rather than deleting it
+- invalidation-style lifecycle may be useful for deciding when a family leaves the live map
+
+## 2026-04-28 - Candle History Discussion
+
+Current candle storage understanding:
+
+- 1 day of 1m candles = 1,440 candles per symbol
+- 3 days of 1m candles = 4,320 candles per symbol
+- current stored candle cap is 5,000 candles in `data/candles.json`
+- that means one symbol can hold a little over 3 days of 1m candles
+- multiple symbols share the same 5,000 stored-candle cap, so history depth shrinks as more symbols are stored
+
+Current Chart Lab loading behavior:
+
+- Chart Lab asks `/api/candles` for the latest 500 stored 1m candles
+- 500 candles is only about 8 hours and 20 minutes on 1m
+- yesterday's candles may exist in storage but not appear in Chart Lab because the UI fetch window is too small
+- `/api/candles` also currently caps responses at 1,000 candles, so loading a full yesterday view on 1m would need a backend/API cap change too
+
+Future discussion:
+
+- decide whether Chart Lab should support history range controls such as Last 500, Today, Yesterday, and Last 3 Days
+- decide whether candle storage should rotate/archive like raw alerts instead of trimming older candles after the 5,000 cap
+- decide whether candle storage caps should be global or per symbol
+
+## 2026-04-28 - Current Stop Point / Handoff
+
+Where we stopped:
+
+- The latest work ended after the OB Story Visibility UI patch.
+- No new backend trading logic was added in that patch.
+- Dashboard OB cards now expose the story/clue state clearly:
+  - OB range and creation time
+  - status and active/archive state
+  - direction remains separate from provisional direction
+  - birthWatch status/count/reason
+  - eye opener story status/type/direction/time
+  - tap count and last tap
+  - current reactionWatch status/count/tap/verdict
+  - reactionHistory previous-cycle count
+- Tap Matches and Eye Openers are visible as dashboard sections.
+- OBs are visually grouped as Active, Liquidity Engineering, Tapped / Pending Reaction, and Invalidated / Archived.
+
+What has been archived / preserved:
+
+- Raw alerts now auto-archive to `data/archive/raw-events-*.json` when the 500-alert limit is reached.
+- `Archive & Reset Raw Alerts` archives and clears only raw alerts.
+- `Reset Family Map` clears live family-map state plus saved manual history clues, but preserves raw alerts, candles, Chart Lab data, tree layout, and settings.
+- Test runs used `Reset Family Map` to clear the board before verification payloads.
+
+Verified layers:
+
+- BirthWatch:
+  - bullish / bearish / unclear provisional direction worked
+  - wrong symbol, wrong timeframe, and same OB bar-time candles were ignored
+  - birthWatch stopped at exactly 3 candles
+  - OB `direction` remained `unknown`
+- Eye Openers:
+  - CHoCH/BOS created eyeOpener records
+  - prior active same-symbol/same-timeframe OBs linked
+  - later OBs did not retro-link to old eye openers
+  - wrong symbol and wrong timeframe did not link
+  - provisionalDirection stayed untouched
+- Reaction History:
+  - repeated taps preserve the previous reactionWatch in `reactionHistory`
+  - current reactionWatch belongs to the latest tap
+  - previous reaction cycle keeps its collected candles and replacement metadata
+
+Known skipped / future helper:
+
+- Invalidated/archived OB exclusion in eye-opener tests still needs a tiny explicit test hook/helper, because there is no safe current endpoint to manually mark one specific OB invalidated/archived for setup.
+
+Next safe discussion areas:
+
+- deeper story layer after the visibility patch
+- per-family close / move-to-archive behavior
+- candle-history controls and candle archive rotation
+- explicit test helper for marking an OB invalidated/archived during verification
+
+## 2026-04-28 - Next Priority Note
+
+Current priority:
+
+- the engine/story logic is more important than Chart Lab polish right now
+- Chart Lab suggestions are parked as future discussion items, not the active build focus
+
+Parked Chart Lab ideas:
+
+- history range controls such as Last 500, Today, Yesterday, and Last 3 Days
+- wheel/drag/pinch behavior verification in a real browser
+- candle storage/API cap changes if deeper chart history becomes needed
+
+Working rule:
+
+- before any engine code implementation, align the rule in words first
+- Codex should ask for explicit approval before changing code or running heavier verification
+
+## 2026-04-28 - Reaction Verdict Patch
+
+Implemented with explicit build-only boundary:
+
+- reactionWatch verdict logic now uses prior direction context only
+- tap event names do not decide direction
+- OB `direction` remains `unknown`
+- direction basis priority is:
+  - `eyeOpenerDirection` when bullish/bearish
+  - `provisionalDirection` from birthWatch when bullish/bearish
+  - `unknown` when neither exists
+- reactionWatch stores `directionBasis`, `reason`, `status`, and `verdict`
+
+Reaction verdicts:
+
+- bullish basis:
+  - close below OB low -> `invalidated`
+  - close above OB high -> `respected`
+- bearish basis:
+  - close above OB high -> `invalidated`
+  - close below OB low -> `respected`
+- unknown basis:
+  - after 3 candles -> `reaction_pending_direction`
+- after at least 3 candles with no respected/invalidated verdict and candle overlap holding around the OB -> `liquidity_engineering_active`
+- if liquidity engineering was already active and a later respected verdict appears -> `respected_high_priority` with `priority: high`
+- at max window, overlapping/holding price stays `liquidity_engineering_active` and does not become weak
+
+Boundaries preserved:
+
+- no tests or payload verification were added
+- no AI, trade decision, risk, breaker-block, bait/fake/real, tap matching, birthWatch, eyeOpener, reactionHistory, or family-map behavior was redesigned
+
+## 2026-04-28 - Reaction Verdict Verification
+
+Ran the supplied reaction verdict payload set through `/webhook` after raw archive/reset and Family Map reset.
+
+Result:
+
+- 32 webhook payloads returned HTTP 200
+- final `/state` showed 5 OB boxes and 5 tap matches
+- bullish birthWatch basis -> respected worked on EURUSD
+- bullish birthWatch basis -> invalidated worked on GBPUSD
+- bearish birthWatch basis -> respected worked on AUDUSD
+- bearish birthWatch basis -> invalidated worked on NZDUSD
+- unknown basis -> `reaction_pending_direction` worked on USDJPY
+- all tested OBs kept `direction: "unknown"`
+- tap event names were not used as direction basis
