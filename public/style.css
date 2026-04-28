@@ -1305,6 +1305,47 @@ body.view-tablet .history-layout {
   fill: rgba(255, 111, 125, 0.72);
 }
 
+.chart-ob-overlay {
+  pointer-events: none;
+}
+
+.chart-ob-overlay rect {
+  fill: rgba(125, 169, 255, 0.12);
+  stroke: rgba(174, 201, 255, 0.9);
+  stroke-width: 1.6;
+}
+
+.chart-ob-overlay text {
+  fill: rgba(239, 245, 255, 0.9);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: rgba(7, 11, 16, 0.9);
+  stroke-width: 3px;
+}
+
+.chart-ob-overlay-liquidity rect {
+  fill: rgba(255, 210, 96, 0.14);
+  stroke: rgba(255, 210, 96, 0.95);
+  stroke-dasharray: 6 4;
+  stroke-width: 2.2;
+}
+
+.chart-ob-overlay-respected rect {
+  fill: rgba(94, 240, 143, 0.12);
+  stroke: rgba(94, 240, 143, 0.95);
+  stroke-width: 2;
+}
+
+.chart-ob-overlay-inactive rect {
+  fill: rgba(191, 205, 224, 0.06);
+  stroke: rgba(191, 205, 224, 0.42);
+  stroke-dasharray: 4 5;
+}
+
+.chart-ob-overlay-inactive text {
+  fill: rgba(191, 205, 224, 0.62);
+}
+
 .chartlab-body {
   height: 100vh;
   overflow: hidden;

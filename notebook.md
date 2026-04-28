@@ -393,3 +393,30 @@ Result:
 - unknown basis -> `reaction_pending_direction` worked on USDJPY
 - all tested OBs kept `direction: "unknown"`
 - tap event names were not used as direction basis
+
+## 2026-04-28 - Chart Lab OB Overlay Patch
+
+Implemented build-only visual mirror:
+
+- Chart Lab now fetches `/state` and reads `obBoxes`
+- only OBs matching the selected symbol and timeframe are drawn
+- OB rectangles map vertical range from `ob.low` to `ob.high`
+- OB horizontal start uses the first chart candle at or after the OB `bar_time`
+- OB horizontal end extends to the current visible chart right edge
+- overlays redraw with the existing chart camera, so pan/zoom keeps OB boxes aligned with candles
+- compact overlay labels show short OB id, status, provisional direction, and tap count
+- top legend shows `OB overlays: N`
+
+Visual states:
+
+- active uses the default OB outline
+- `liquidity_engineering_active` uses stronger dashed emphasis
+- `respected` / `respected_high_priority` use a successful-looking outline
+- invalidated, archived, or inactive OBs are faded and dashed
+
+Boundary:
+
+- no backend changes
+- no new trading logic
+- no lifecycle, birthWatch, eyeOpener, tap matching, reaction verdict, AI, trade signal, breaker, fake/bait/real, or UI redesign changes
+- tap markers were skipped for this patch

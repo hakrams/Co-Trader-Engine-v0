@@ -19,6 +19,7 @@ const chartViewport = {
 let chartMode = localStorage.getItem("chartLabMode") || "line";
 const chartState = {
   candles: { count: 0, items: [] },
+  engine: { obBoxes: [], tapMatches: [] },
   symbols: []
 };
 
@@ -246,10 +247,132 @@ function syncPriceCamera(visibleCandles) {
   chartViewport.priceMax = center + visibleSpan / 2;
 }
 
+function getObTime(obBox) {
+  return obBox?.bar_time || obBox?.barTime || null;
+}
+
+function getShortObId(obBox) {
+  const id = String(obBox?.id || "ob");
+  const compact = id.replace(/[^a-z0-9]/gi, "");
+  return compact.slice(-4) || "ob";
+}
+
+function getObOverlayClass(obBox) {
+  const status = String(obBox?.status || "active").toLowerCase();
+
+  if (status === "liquidity_engineering_active") {
+    return "chart-ob-overlay chart-ob-overlay-liquidity";
+  }
+
+  if (status === "respected" || status === "respected_high_priority") {
+    return "chart-ob-overlay chart-ob-overlay-respected";
+  }
+
+  if (status === "invalidated" || obBox?.archived === true || obBox?.active === false) {
+    return "chart-ob-overlay chart-ob-overlay-inactive";
+  }
+
+  return "chart-ob-overlay chart-ob-overlay-active";
+}
+
+function findCandleIndexAtOrAfter(candles, rawTime) {
+  const targetMs = new Date(rawTime || 0).getTime();
+
+  if (!Number.isFinite(targetMs)) {
+    return -1;
+  }
+
+  return candles.findIndex((candle) => {
+    const candleMs = new Date(candle.barTime || 0).getTime();
+    return Number.isFinite(candleMs) && candleMs >= targetMs;
+  });
+}
+
+function getMatchingObBoxes(symbol, timeframe) {
+  return (chartState.engine.obBoxes || []).filter((obBox) => {
+    return (
+      String(obBox.symbol || "").toUpperCase() === symbol &&
+      normalizeTimeframeInput(obBox.timeframe) === timeframe &&
+      Number.isFinite(Number(obBox.high)) &&
+      Number.isFinite(Number(obBox.low)) &&
+      getObTime(obBox)
+    );
+  });
+}
+
+function renderObOverlays(candles, visibleWindow, geometry, yFor) {
+  const { symbol, timeframe } = getChartFilters();
+  const countNode = document.getElementById("ob-overlay-count");
+
+  if (!symbol || !timeframe) {
+    if (countNode) countNode.textContent = "OB overlays: 0";
+    return "";
+  }
+
+  const matchingBoxes = getMatchingObBoxes(symbol, timeframe);
+  const visibleBoxes = matchingBoxes
+    .map((obBox) => {
+      const startIndex = findCandleIndexAtOrAfter(candles, getObTime(obBox));
+
+      if (startIndex < 0 || startIndex > visibleWindow.rightIndex) {
+        return null;
+      }
+
+      const relativeStart = startIndex - visibleWindow.leftIndex;
+      const x1 = clamp(
+        geometry.margin.left + geometry.candleStep * relativeStart,
+        geometry.margin.left,
+        geometry.width - geometry.margin.right
+      );
+      const x2 = geometry.width - geometry.margin.right;
+      const yHigh = yFor(Number(obBox.high));
+      const yLow = yFor(Number(obBox.low));
+      const y = Math.min(yHigh, yLow);
+      const height = Math.max(4, Math.abs(yLow - yHigh));
+      const width = Math.max(8, x2 - x1);
+
+      return {
+        obBox,
+        x: x1,
+        y,
+        width,
+        height
+      };
+    })
+    .filter(Boolean);
+
+  if (countNode) {
+    countNode.textContent = `OB overlays: ${visibleBoxes.length}`;
+  }
+
+  return visibleBoxes.map(({ obBox, x, y, width, height }) => {
+    const status = obBox.status || "active";
+    const provisional = obBox.provisionalDirection || "unknown";
+    const tapCount = Number(obBox.tapCount ?? obBox.tap_count ?? 0);
+    const label = `OB ${getShortObId(obBox)} · ${status} · ${provisional} · ${tapCount}x`;
+    const labelY = y + 14;
+    const title = [
+      `OB ${getShortObId(obBox)}`,
+      `status ${status}`,
+      `provisional ${provisional}`,
+      `taps ${tapCount}`,
+      `range ${formatPrice(obBox.low)} - ${formatPrice(obBox.high)}`,
+      `created ${formatTimestamp(getObTime(obBox))}`
+    ].join(" | ");
+
+    return `<g class="${getObOverlayClass(obBox)}">
+      <rect x="${x}" y="${y}" width="${width}" height="${height}"></rect>
+      <text x="${x + 6}" y="${labelY}">${escapeHtml(label)}</text>
+      <title>${escapeHtml(title)}</title>
+    </g>`;
+  }).join("");
+}
+
 function renderChartLab() {
   const container = document.getElementById("candle-chart");
   const title = document.getElementById("chart-title");
   const summary = document.getElementById("chart-summary");
+  const overlayCount = document.getElementById("ob-overlay-count");
   if (!container) return;
 
   const { timeframe } = getChartFilters();
@@ -260,6 +383,7 @@ function renderChartLab() {
     container.textContent = "No candle data recorded yet.";
     if (title) title.textContent = "Waiting for candles";
     if (summary) summary.textContent = "Send candle_details webhooks to start drawing local candles.";
+    if (overlayCount) overlayCount.textContent = "OB overlays: 0";
     return;
   }
 
@@ -286,6 +410,13 @@ function renderChartLab() {
   function yFor(price) {
     return margin.top + (priceMax - price) / priceRange * plotHeight;
   }
+
+  const obOverlayNodes = renderObOverlays(
+    candles,
+    { leftIndex, rightIndex, visible },
+    { width, margin, candleStep },
+    yFor
+  );
 
   const priceTicks = Array.from({ length: 7 }, (_, index) => {
     const value = priceMin + (priceRange / 6) * index;
@@ -361,6 +492,7 @@ function renderChartLab() {
     <rect class="chart-plot-bg" x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}"></rect>
 
     <g id="plot-layer" clip-path="url(#chart-plot-clip)">
+      ${obOverlayNodes}
       ${chartNodes}
     </g>
 
@@ -386,6 +518,16 @@ async function loadCandles() {
 
   const res = await fetch(`/api/candles?${params.toString()}`);
   chartState.candles = await res.json();
+  renderChartLab();
+}
+
+async function loadEngineState() {
+  const res = await fetch("/state");
+  chartState.engine = await res.json();
+}
+
+async function loadChartData() {
+  await Promise.all([loadCandles(), loadEngineState()]);
   renderChartLab();
 }
 
@@ -425,7 +567,7 @@ function setupChartLabControls() {
   }
   const refreshButton = document.getElementById("chart-refresh");
   if (refreshButton) {
-    refreshButton.addEventListener("click", loadCandles);
+    refreshButton.addEventListener("click", loadChartData);
   }
 
   const symbolSelect = document.getElementById("chart-symbol");
@@ -435,7 +577,7 @@ function setupChartLabControls() {
       chartViewport.rightIndex = null;
       chartViewport.stickToLatest = true;
       chartViewport.priceManual = false;
-      loadCandles();
+      loadChartData();
     });
   }
 
@@ -453,12 +595,12 @@ function setupChartLabControls() {
 }
 
 setupChartLabControls();
-loadAvailableSymbols().then(loadCandles).catch((error) => {
+loadAvailableSymbols().then(loadChartData).catch((error) => {
   console.error("Failed to load candles:", error);
   const summary = document.getElementById("chart-summary");
   if (summary) summary.textContent = `Failed to load candles: ${error.message}`;
 });
-setInterval(loadCandles, 3000);
+setInterval(loadChartData, 3000);
 
 function getPointerDistance(points) {
   if (points.length < 2) return null;
