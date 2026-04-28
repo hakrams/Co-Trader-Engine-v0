@@ -1065,7 +1065,7 @@ app.post("/webhook", (req, res) => {
     }
 
     if (parsed.normalized.event_type === "ob_created") {
-      const obBoxResult = state.storeObBoxFromEvent(parsed);
+      const obBoxResult = state.storeObBoxFromEvent(parsed, readCandles());
 
       if (obBoxResult && !obBoxResult.ok) {
         console.log(`[OB BOX] Not stored: ${obBoxResult.error}`);

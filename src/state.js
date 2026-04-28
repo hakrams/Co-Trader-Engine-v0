@@ -488,13 +488,24 @@ function normalizeObBoxRecord(box) {
             candlesCollected: Array.isArray(box.birthWatch.candlesCollected)
               ? box.birthWatch.candlesCollected
               : [],
-            requiredCandles: Number.isFinite(Number(box.birthWatch.requiredCandles))
+            requiredCandles:
+              box.birthWatch.requiredCandles === null
+                ? null
+                : Number.isFinite(Number(box.birthWatch.requiredCandles))
               ? Number(box.birthWatch.requiredCandles)
-              : 3,
+              : box.birthWatch.mode === "confirmation_window"
+                ? null
+                : 3,
             status: box.birthWatch.status || "watching",
             provisionalDirection: box.birthWatch.provisionalDirection || null,
             confidence: box.birthWatch.confidence || "none",
-            reason: box.birthWatch.reason || null
+            reason: box.birthWatch.reason || null,
+            mode: box.birthWatch.mode || "future_candles",
+            obBarTime: box.birthWatch.obBarTime || box.birthWatch.windowStart || box.bar_time || null,
+            alertTime: box.birthWatch.alertTime || box.alert_time || null,
+            windowStart: box.birthWatch.windowStart || box.birthWatch.obBarTime || box.bar_time || null,
+            windowEnd: box.birthWatch.windowEnd || box.birthWatch.alertTime || box.alert_time || null,
+            candleSource: box.birthWatch.candleSource || null
           }
         : null,
     status: box.status || "active",
@@ -2535,20 +2546,275 @@ function createObBoxId(parsed) {
 
 function createBirthWatch(obBox) {
   const now = new Date().toISOString();
+  const windowStart = obBox.bar_time || now;
+  const windowEnd =
+    obBox.alert_time ||
+    obBox.received_at ||
+    obBox.created_at ||
+    now;
 
   return {
+    mode: "confirmation_window",
     startedAt: now,
-    obBarTime: obBox.bar_time || now,
+    obBarTime: windowStart,
+    alertTime: obBox.alert_time || null,
+    windowStart,
+    windowEnd,
     candlesCollected: [],
-    requiredCandles: 3,
-    status: "watching",
+    requiredCandles: null,
+    status: "pending_missing_candles",
     provisionalDirection: null,
     confidence: "none",
-    reason: null
+    reason: null,
+    candleSource: null
   };
 }
 
-function storeObBoxFromEvent(parsed) {
+function getTimeframeMinutes(value) {
+  const timeframe = normalizeMarketTimeframe(value);
+
+  if (/^\d+m$/.test(timeframe)) {
+    return Number(timeframe.slice(0, -1));
+  }
+
+  if (/^\d+h$/.test(timeframe)) {
+    return Number(timeframe.slice(0, -1)) * 60;
+  }
+
+  if (/^\d+$/.test(timeframe)) {
+    return Number(timeframe);
+  }
+
+  return null;
+}
+
+function normalizeBirthCandleRecord(candle) {
+  if (!candle || typeof candle !== "object") {
+    return null;
+  }
+
+  const barTime = candle.barTime || candle.bar_time || null;
+  const high = Number(candle.high);
+  const low = Number(candle.low);
+  const open = Number(candle.open);
+  const close = Number(candle.close);
+
+  if (
+    !barTime ||
+    !Number.isFinite(open) ||
+    !Number.isFinite(high) ||
+    !Number.isFinite(low) ||
+    !Number.isFinite(close)
+  ) {
+    return null;
+  }
+
+  return {
+    symbol: normalizeMarketSymbol(candle.symbol),
+    exchange: candle.exchange || null,
+    timeframe: normalizeMarketTimeframe(candle.timeframe),
+    barTime: toIsoOrNow(barTime),
+    alertTime: candle.alertTime || candle.alert_time || null,
+    receivedAt: candle.receivedAt || candle.received_at || null,
+    open,
+    high,
+    low,
+    close,
+    volume: Number.isFinite(Number(candle.volume)) ? Number(candle.volume) : null
+  };
+}
+
+function getBirthWatchWindow(watch, obBox) {
+  const windowStart = watch?.windowStart || watch?.obBarTime || obBox?.bar_time || null;
+  const windowEnd =
+    watch?.windowEnd ||
+    watch?.alertTime ||
+    obBox?.alert_time ||
+    obBox?.received_at ||
+    obBox?.created_at ||
+    null;
+
+  return {
+    windowStart: windowStart ? toIsoOrNow(windowStart) : null,
+    windowEnd: windowEnd ? toIsoOrNow(windowEnd) : null
+  };
+}
+
+function getBirthCandleSource(timeframe) {
+  if (timeframe === "1m") {
+    return "stored_1m_confirmation_window";
+  }
+
+  return "same_tf_confirmation_window";
+}
+
+function calculateExpectedBirthCandles(windowStart, windowEnd, timeframe) {
+  const startMs = new Date(windowStart || 0).getTime();
+  const endMs = new Date(windowEnd || 0).getTime();
+  const minutes = getTimeframeMinutes(timeframe);
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !minutes || endMs <= startMs) {
+    return null;
+  }
+
+  return Math.max(1, Math.round((endMs - startMs) / (minutes * 60 * 1000)));
+}
+
+function selectBirthConfirmationCandles(obBox, candles) {
+  const watch = obBox.birthWatch || createBirthWatch(obBox);
+  const { windowStart, windowEnd } = getBirthWatchWindow(watch, obBox);
+  const startMs = new Date(windowStart || 0).getTime();
+  const endMs = new Date(windowEnd || 0).getTime();
+
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return {
+      candles: [],
+      candleSource: null,
+      requiredCandles: null
+    };
+  }
+
+  const matching = (candles || [])
+    .map(normalizeBirthCandleRecord)
+    .filter((candle) => {
+      if (!candle) return false;
+
+      const candleMs = new Date(candle.barTime || 0).getTime();
+
+      return (
+        candle.symbol === obBox.symbol &&
+        Number.isFinite(candleMs) &&
+        candleMs >= startMs &&
+        candleMs < endMs
+      );
+    })
+    .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
+
+  const oneMinuteCandles = matching.filter((candle) => candle.timeframe === "1m");
+  const sameTimeframeCandles = matching.filter((candle) => candle.timeframe === obBox.timeframe);
+  const selected = oneMinuteCandles.length ? oneMinuteCandles : sameTimeframeCandles;
+  const selectedTimeframe = oneMinuteCandles.length ? "1m" : obBox.timeframe;
+
+  return {
+    candles: selected,
+    candleSource: selected.length ? getBirthCandleSource(selectedTimeframe) : null,
+    requiredCandles: selected.length
+      ? calculateExpectedBirthCandles(windowStart, windowEnd, selectedTimeframe)
+      : null
+  };
+}
+
+function inferBirthDirection(obBox, candlesCollected) {
+  const candles = (candlesCollected || []).slice().sort((a, b) => {
+    return new Date(a.barTime || 0) - new Date(b.barTime || 0);
+  });
+  const firstOpen = Number(candles[0]?.open);
+  const windowClose = Number(candles[candles.length - 1]?.close);
+  const highs = candles.map((candle) => Number(candle.high));
+  const lows = candles.map((candle) => Number(candle.low));
+  const maxHigh = Math.max(...highs);
+  const minLow = Math.min(...lows);
+  const obHigh = Number(obBox.high);
+  const obLow = Number(obBox.low);
+
+  if (
+    Number.isFinite(firstOpen) &&
+    Number.isFinite(windowClose) &&
+    windowClose > firstOpen
+  ) {
+    const confirmedHigh = Number.isFinite(maxHigh) && Number.isFinite(obHigh) && maxHigh >= obHigh;
+
+    return {
+      provisionalDirection: "bullish",
+      confidence: "medium",
+      reason: confirmedHigh
+        ? "confirmation_window_closed_up_confirmed_zone_high"
+        : "confirmation_window_closed_up"
+    };
+  }
+
+  if (
+    Number.isFinite(firstOpen) &&
+    Number.isFinite(windowClose) &&
+    windowClose < firstOpen
+  ) {
+    const confirmedLow = Number.isFinite(minLow) && Number.isFinite(obLow) && minLow <= obLow;
+
+    return {
+      provisionalDirection: "bearish",
+      confidence: "medium",
+      reason: confirmedLow
+        ? "confirmation_window_closed_down_confirmed_zone_low"
+        : "confirmation_window_closed_down"
+    };
+  }
+
+  return {
+    provisionalDirection: "unclear",
+    confidence: "low",
+    reason: "confirmation_window_no_clear_displacement"
+  };
+}
+
+function applyBirthWatchResult(obBox, selectedCandles, candleSource, requiredCandles) {
+  const watch = obBox.birthWatch || createBirthWatch(obBox);
+  const { windowStart, windowEnd } = getBirthWatchWindow(watch, obBox);
+  const candlesCollected = (selectedCandles || []).slice();
+  const hasEnoughCandles =
+    candlesCollected.length > 0 &&
+    (!requiredCandles || candlesCollected.length >= requiredCandles);
+  const nextWatch = {
+    ...watch,
+    mode: "confirmation_window",
+    obBarTime: windowStart,
+    alertTime: obBox.alert_time || watch.alertTime || null,
+    windowStart,
+    windowEnd,
+    candlesCollected,
+    requiredCandles,
+    candleSource,
+    status: hasEnoughCandles ? "complete" : "pending_missing_candles"
+  };
+
+  if (!hasEnoughCandles) {
+    return {
+      ...obBox,
+      birthWatch: {
+        ...nextWatch,
+        provisionalDirection: null,
+        confidence: "none",
+        reason: "confirmation_window_missing_candles"
+      }
+    };
+  }
+
+  const directionResult = inferBirthDirection(obBox, candlesCollected);
+
+  return {
+    ...obBox,
+    provisionalDirection: directionResult.provisionalDirection,
+    directionConfidence: directionResult.confidence,
+    directionSource: "birth_confirmation_window",
+    birthWatch: {
+      ...nextWatch,
+      provisionalDirection: directionResult.provisionalDirection,
+      confidence: directionResult.confidence,
+      reason: directionResult.reason
+    }
+  };
+}
+
+function refreshBirthWatchFromCandles(obBox, candles) {
+  const selected = selectBirthConfirmationCandles(obBox, candles);
+  return applyBirthWatchResult(
+    obBox,
+    selected.candles,
+    selected.candleSource,
+    selected.requiredCandles
+  );
+}
+
+function storeObBoxFromEvent(parsed, storedCandles = []) {
   if (parsed?.normalized?.event_type !== "ob_created") {
     return null;
   }
@@ -2630,14 +2896,15 @@ function storeObBoxFromEvent(parsed) {
     last_tapped_at: null
   };
   obBox.birthWatch = createBirthWatch(obBox);
+  const obBoxWithBirthWatch = refreshBirthWatchFromCandles(obBox, storedCandles);
 
-  state.obBoxes = ensureObBoxes([...ensureObBoxes(state.obBoxes), obBox]);
+  state.obBoxes = ensureObBoxes([...ensureObBoxes(state.obBoxes), obBoxWithBirthWatch]);
   saveStateToFile();
 
   return {
     ok: true,
     stored: true,
-    obBox
+    obBox: obBoxWithBirthWatch
   };
 }
 
@@ -2968,51 +3235,6 @@ function buildReactionCandle(parsed) {
   };
 }
 
-function inferBirthDirection(obBox, candlesCollected) {
-  const requiredCandles = Number(obBox.birthWatch?.requiredCandles || 3);
-  const candles = candlesCollected.slice(0, requiredCandles);
-  const firstClose = Number(candles[0]?.close);
-  const lastClose = Number(candles[candles.length - 1]?.close);
-  const highs = candles.map((candle) => Number(candle.high));
-  const lows = candles.map((candle) => Number(candle.low));
-  const maxHigh = Math.max(...highs);
-  const minLow = Math.min(...lows);
-
-  if (
-    Number.isFinite(firstClose) &&
-    Number.isFinite(lastClose) &&
-    Number.isFinite(maxHigh) &&
-    lastClose > firstClose &&
-    maxHigh > Number(obBox.high)
-  ) {
-    return {
-      provisionalDirection: "bullish",
-      confidence: "medium",
-      reason: "birth_candles_pushed_up_after_ob"
-    };
-  }
-
-  if (
-    Number.isFinite(firstClose) &&
-    Number.isFinite(lastClose) &&
-    Number.isFinite(minLow) &&
-    lastClose < firstClose &&
-    minLow < Number(obBox.low)
-  ) {
-    return {
-      provisionalDirection: "bearish",
-      confidence: "medium",
-      reason: "birth_candles_pushed_down_after_ob"
-    };
-  }
-
-  return {
-    provisionalDirection: "unclear",
-    confidence: "low",
-    reason: "birth_candles_no_clear_displacement"
-  };
-}
-
 function observeObBirthFromCandle(parsed) {
   const candle = buildReactionCandle(parsed);
 
@@ -3031,57 +3253,45 @@ function observeObBirthFromCandle(parsed) {
 
     if (
       !watch ||
-      watch.status !== "watching" ||
       box.symbol !== candle.symbol ||
-      box.timeframe !== candle.timeframe ||
-      new Date(candle.barTime).getTime() <= new Date(watch.obBarTime).getTime()
+      watch.status === "complete"
     ) {
       return box;
     }
 
-    const requiredCandles = Number(watch.requiredCandles || 3);
-    const candlesCollected = Array.isArray(watch.candlesCollected)
+    const { windowStart, windowEnd } = getBirthWatchWindow(watch, box);
+    const candleMs = new Date(candle.barTime || 0).getTime();
+    const startMs = new Date(windowStart || 0).getTime();
+    const endMs = new Date(windowEnd || 0).getTime();
+
+    if (
+      !Number.isFinite(candleMs) ||
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(endMs) ||
+      candleMs < startMs ||
+      candleMs >= endMs
+    ) {
+      return box;
+    }
+
+    const existingCandles = Array.isArray(watch.candlesCollected)
       ? watch.candlesCollected
       : [];
 
-    if (
-      candlesCollected.length >= requiredCandles ||
-      candlesCollected.some((item) => item.barTime === candle.barTime)
-    ) {
+    if (existingCandles.some((item) => item.barTime === candle.barTime)) {
       return box;
     }
 
-    const nextCandles = [...candlesCollected, candle].slice(0, requiredCandles);
-    const nextWatch = {
-      ...watch,
-      candlesCollected: nextCandles
-    };
-    const nextBox = {
-      ...box,
-      birthWatch: nextWatch,
-      updated_at: new Date().toISOString()
-    };
+    const refreshedBox = refreshBirthWatchFromCandles(
+      box,
+      [...existingCandles, candle]
+    );
 
     updated += 1;
 
-    if (nextCandles.length < requiredCandles) {
-      return nextBox;
-    }
-
-    const directionResult = inferBirthDirection(nextBox, nextCandles);
-
     return {
-      ...nextBox,
-      provisionalDirection: directionResult.provisionalDirection,
-      directionConfidence: directionResult.confidence,
-      directionSource: "birth_candles",
-      birthWatch: {
-        ...nextWatch,
-        status: "complete",
-        provisionalDirection: directionResult.provisionalDirection,
-        confidence: directionResult.confidence,
-        reason: directionResult.reason
-      }
+      ...refreshedBox,
+      updated_at: new Date().toISOString()
     };
   });
 

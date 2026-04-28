@@ -420,3 +420,36 @@ Boundary:
 - no new trading logic
 - no lifecycle, birthWatch, eyeOpener, tap matching, reaction verdict, AI, trade signal, breaker, fake/bait/real, or UI redesign changes
 - tap markers were skipped for this patch
+
+## 2026-04-28 - BirthWatch Confirmation Window Patch
+
+Corrected BirthWatch meaning:
+
+- TradingView/LuxAlgo `zone_created` alerts are delayed by confirmation candles
+- BirthWatch no longer assumes the next 3 candles after `zone_created` are the birth candles
+- new BirthWatch mode is `confirmation_window`
+- window start is OB `bar_time`
+- window end is OB `alert_time`, with received/created time as fallback
+- stored candles are checked immediately when an OB is created
+- 1m candle details are preferred for the confirmation window when available
+- same-timeframe candles are used as fallback if 1m confirmation candles are unavailable
+- incoming candle details can still fill a pending confirmation window if matching candles arrive late/out of order
+
+Direction inference:
+
+- uses confirmation-window `first open` and `last close`
+- close above open -> `provisionalDirection: bullish`
+- close below open -> `provisionalDirection: bearish`
+- flat/no clear move -> `provisionalDirection: unclear`
+- `directionSource` is now `birth_confirmation_window`
+- OB `direction` remains `unknown`
+
+Missing candles:
+
+- BirthWatch stays `pending_missing_candles`
+- provisional direction remains null
+- reason is `confirmation_window_missing_candles`
+
+Boundary:
+
+- no OB tap matching, reactionWatch, reactionHistory, eyeOpener, Chart Lab rendering, TFC, trade decision, AI, fake/bait/real, or final OB direction behavior was changed

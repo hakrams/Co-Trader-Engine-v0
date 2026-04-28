@@ -357,6 +357,7 @@ function renderObBoxCard(box) {
   const birthCount = Array.isArray(birthWatch.candlesCollected)
     ? birthWatch.candlesCollected.length
     : 0;
+  const birthRequired = birthWatch.requiredCandles ?? "?";
   const provisional = box.provisionalDirection || birthWatch.provisionalDirection || "none";
   const confidence = box.directionConfidence || birthWatch.confidence || "none";
   const source = box.directionSource || (provisional !== "none" ? "birth_candles" : "none");
@@ -381,7 +382,7 @@ function renderObBoxCard(box) {
         ${renderObField("State", `${box.status || "active"} / ${activeState}`)}
         ${renderObField("Created", formatTimestamp(box.bar_time))}
         ${renderObField("Direction", box.direction || "unknown")}
-        ${renderObField("Birth", `${birthWatch.status || "none"} · ${birthCount}/${birthWatch.requiredCandles || 3}`)}
+        ${renderObField("Birth", `${birthWatch.status || "none"} · ${birthCount}/${birthRequired}`)}
         ${renderObField("Provisional", `${provisional} / ${confidence}`)}
         ${renderObField("Source", source)}
         ${renderObField("Birth reason", birthWatch.reason || "none")}
