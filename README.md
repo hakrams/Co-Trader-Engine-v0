@@ -30,6 +30,8 @@ Do not rely on chat memory alone for project continuity.
 - persists engine state to `data/engine-state.json`
 - exposes a browser dashboard from `public/`
 - exposes raw event inspection through `GET /api/raw-events`
+- exposes Chart Lab at `/chartlab` for candle/OB visual debugging
+- exposes Chart Structure at `/chartstructure` for materialized MTF candle viewing
 
 ## Current Architecture
 
@@ -54,6 +56,10 @@ co-trader-engine-v2/
 |   `-- .gitkeep
 |-- public/
 |   |-- index.html
+|   |-- chartlab.html
+|   |-- chartlab.js
+|   |-- chartstructure.html
+|   |-- chartstructure.js
 |   |-- style.css
 |   `-- app.js
 |-- src/
@@ -88,6 +94,12 @@ co-trader-engine-v2/
 
 - `public/app.js`
   Polls engine APIs, renders state, shows raw payload visibility, and raises browser notifications on decision changes.
+
+- `public/chartlab.js`
+  Draws the Chart Lab candle/OB debug surface from stored 1m candles and engine OB state.
+
+- `public/chartstructure.js`
+  Draws the Chart Structure MTF candle surface from materialized structure-candle APIs. Structure overlays are intentionally parked for a later phase.
 
 ## Event Flow
 
@@ -200,6 +212,31 @@ Returns:
 - recent raw payload history
 
 Raw alert storage rotates automatically at 500 stored alerts. When the limit is reached, the current raw-alert batch is archived under `data/archive/` and the next incoming alert starts a fresh raw-alert feed. This rotation only affects raw alerts; it does not clear Family Map clues, OB boxes, setups, history clues, candles, or Chart Lab data.
+
+### `GET /api/candles`
+
+Returns stored candle details. Candle storage is retained at 5000 rows per `symbol + timeframe`.
+
+### `GET /api/candle-symbols`
+
+Returns the symbols and candle markets available from stored candle data.
+
+### `GET /api/structure-candles`
+
+Returns materialized MTF candles for Chart Structure and later structure logic. Supported materialized timeframes are:
+
+- `3m`
+- `5m`
+- `15m`
+- `30m`
+- `1h`
+- `4h`
+
+Each materialized candle includes `status: "forming"` or `status: "closed"`. Structure logic should use only closed materialized candles; the UI may display the forming candle visually.
+
+### `GET /api/structure-candle-symbols`
+
+Returns the symbols, timeframes, counts, and closed/forming counts available from materialized structure candles.
 
 ### `POST /archive-reset`
 

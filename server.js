@@ -11,15 +11,30 @@ const FAMILY_MAP_RESET_PIN = "123456";
 const HISTORY_CLUES_FILE = path.join(__dirname, "data", "history-clues.json");
 const TREE_LAYOUT_FILE = path.join(__dirname, "data", "tree-layout.json");
 const CANDLES_FILE = path.join(__dirname, "data", "candles.json");
+const STRUCTURE_CANDLES_FILE = path.join(__dirname, "data", "structure-candles.json");
 const CANDLE_ARCHIVE_DIR = path.join(__dirname, "data", "archive");
 const CANDLE_RETENTION_PER_MARKET = 5000;
 const CANDLE_API_MAX_LIMIT = 10000;
+const STRUCTURE_TIMEFRAMES = ["3m", "5m", "15m", "30m", "1h", "4h"];
+const TIMEFRAME_MINUTES = {
+  "1m": 1,
+  "3m": 3,
+  "5m": 5,
+  "15m": 15,
+  "30m": 30,
+  "1h": 60,
+  "4h": 240
+};
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
 
 app.get("/chartlab", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "chartlab.html"));
+});
+
+app.get("/chartstructure", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "chartstructure.html"));
 });
 
 function readHistoryClues() {
@@ -100,6 +115,25 @@ function writeCandles(items) {
   fs.writeFileSync(CANDLES_FILE, JSON.stringify(items, null, 2));
 }
 
+function readStructureCandles() {
+  try {
+    if (!fs.existsSync(STRUCTURE_CANDLES_FILE)) {
+      return [];
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(STRUCTURE_CANDLES_FILE, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("[STRUCTURE CANDLES READ ERROR]", error.message);
+    return [];
+  }
+}
+
+function writeStructureCandles(items) {
+  fs.mkdirSync(path.dirname(STRUCTURE_CANDLES_FILE), { recursive: true });
+  fs.writeFileSync(STRUCTURE_CANDLES_FILE, JSON.stringify(items, null, 2));
+}
+
 function getCandleMarketKey(candle) {
   return [
     normalizeCandleKeyValue(candle?.symbol),
@@ -178,6 +212,133 @@ function enforceCandleRetention(candles) {
 
 function normalizeCandleKeyValue(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function getBucketStartIso(value, timeframe) {
+  const minutes = TIMEFRAME_MINUTES[timeframe] || 1;
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const bucketMs = minutes * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / bucketMs) * bucketMs).toISOString();
+}
+
+function materializeStructureCandlesFromOneMinute(candles) {
+  const oneMinuteCandles = (candles || [])
+    .filter((candle) => String(candle.timeframe || "").toLowerCase() === "1m")
+    .filter((candle) => {
+      return (
+        candle?.barTime &&
+        candle?.symbol &&
+        Number.isFinite(Number(candle.open)) &&
+        Number.isFinite(Number(candle.high)) &&
+        Number.isFinite(Number(candle.low)) &&
+        Number.isFinite(Number(candle.close))
+      );
+    })
+    .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
+
+  const latestBySymbol = new Map();
+
+  for (const candle of oneMinuteCandles) {
+    const symbol = normalizeCandleKeyValue(candle.symbol);
+    const barMs = new Date(candle.barTime || 0).getTime();
+    const current = latestBySymbol.get(symbol) || 0;
+
+    if (Number.isFinite(barMs) && barMs > current) {
+      latestBySymbol.set(symbol, barMs);
+    }
+  }
+
+  const buckets = new Map();
+
+  for (const candle of oneMinuteCandles) {
+    const symbol = normalizeCandleKeyValue(candle.symbol);
+
+    for (const timeframe of STRUCTURE_TIMEFRAMES) {
+      const bucketTime = getBucketStartIso(candle.barTime, timeframe);
+      if (!bucketTime) continue;
+
+      const key = `${symbol}|${timeframe}|${bucketTime}`;
+
+      if (!buckets.has(key)) {
+        buckets.set(key, {
+          id: `${symbol}_${timeframe}_${bucketTime}`,
+          symbol,
+          exchange: candle.exchange || null,
+          timeframe,
+          barTime: bucketTime,
+          alertTime: candle.alertTime || null,
+          receivedAt: candle.receivedAt || null,
+          open: Number(candle.open),
+          high: Number(candle.high),
+          low: Number(candle.low),
+          close: Number(candle.close),
+          volume: Number.isFinite(Number(candle.volume)) ? Number(candle.volume) : null,
+          sourceEvent: "materialized_from_1m",
+          sourceTimeframe: "1m",
+          status: "forming",
+          sourceCount: 0,
+          firstSourceBarTime: candle.barTime,
+          lastSourceBarTime: candle.barTime,
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      const bucket = buckets.get(key);
+      bucket.high = Math.max(bucket.high, Number(candle.high));
+      bucket.low = Math.min(bucket.low, Number(candle.low));
+      bucket.close = Number(candle.close);
+      bucket.volume =
+        Number.isFinite(bucket.volume) || Number.isFinite(Number(candle.volume))
+          ? Number(bucket.volume || 0) + Number(candle.volume || 0)
+          : null;
+      bucket.alertTime = candle.alertTime || bucket.alertTime;
+      bucket.receivedAt = candle.receivedAt || bucket.receivedAt;
+      bucket.lastSourceBarTime = candle.barTime;
+      bucket.sourceCount += 1;
+
+      const bucketStartMs = new Date(bucketTime).getTime();
+      const bucketEndMs = bucketStartMs + (TIMEFRAME_MINUTES[timeframe] || 1) * 60 * 1000;
+      const latestMs = latestBySymbol.get(symbol) || 0;
+      bucket.status = latestMs >= bucketEndMs ? "closed" : "forming";
+    }
+  }
+
+  const materialized = Array.from(buckets.values()).sort((a, b) => {
+    const symbolCompare = String(a.symbol || "").localeCompare(String(b.symbol || ""));
+    if (symbolCompare !== 0) return symbolCompare;
+    const timeframeCompare = String(a.timeframe || "").localeCompare(String(b.timeframe || ""));
+    if (timeframeCompare !== 0) return timeframeCompare;
+    return new Date(a.barTime || 0) - new Date(b.barTime || 0);
+  });
+
+  const kept = [];
+  const groups = new Map();
+
+  for (const candle of materialized) {
+    const key = getCandleMarketKey(candle);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(candle);
+  }
+
+  for (const groupCandles of groups.values()) {
+    const ordered = groupCandles
+      .slice()
+      .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
+    kept.push(...ordered.slice(-CANDLE_RETENTION_PER_MARKET));
+  }
+
+  return sortCandlesByMarketAndTime(kept);
+}
+
+function rebuildStructureCandlesFromStoredCandles(candles = readCandles()) {
+  const materialized = materializeStructureCandlesFromOneMinute(candles);
+  writeStructureCandles(materialized);
+  return materialized;
 }
 
 function buildCandleFromParsed(parsed) {
@@ -1120,6 +1281,7 @@ app.post("/webhook", (req, res) => {
     if (parsed.normalized.event_type === "candle_details") {
       const candleResult = upsertCandle(parsed);
       const storedCandles = candleResult.ok ? readCandles() : [];
+      const structureCandles = candleResult.ok ? rebuildStructureCandlesFromStoredCandles(storedCandles) : [];
       const birthResult = state.observeObBirthFromCandle(parsed);
       const reactionResult = state.observeObReactionFromCandle(parsed, storedCandles);
 
@@ -1139,6 +1301,7 @@ app.post("/webhook", (req, res) => {
         ok: true,
         storedAs: "candle",
         candle: candleResult.candle,
+        structureCandlesUpdated: structureCandles.length,
         obBirthUpdated: birthResult?.updated || 0,
         obReactionUpdated: reactionResult?.updated || 0
       });
@@ -1273,6 +1436,91 @@ app.get("/api/candles", (req, res) => {
   res.json({
     count: candles.length,
     items: candles
+  });
+});
+
+function getStructureCandlesForRead() {
+  const materialized = readStructureCandles();
+  return materialized.length ? materialized : rebuildStructureCandlesFromStoredCandles();
+}
+
+app.get("/api/structure-candles", (req, res) => {
+  const symbol = normalizeCandleKeyValue(req.query.symbol || "");
+  const timeframe = String(req.query.timeframe || "").trim().toLowerCase();
+  const limit = Math.min(CANDLE_API_MAX_LIMIT, Math.max(1, Number(req.query.limit) || 300));
+  const includeForming = String(req.query.includeForming || "true").toLowerCase() !== "false";
+  const candles = getStructureCandlesForRead()
+    .filter((item) => {
+      const symbolMatches = !symbol || normalizeCandleKeyValue(item.symbol) === symbol;
+      const timeframeMatches = !timeframe || String(item.timeframe || "").toLowerCase() === timeframe;
+      const statusMatches = includeForming || item.status === "closed";
+      return symbolMatches && timeframeMatches && statusMatches;
+    })
+    .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0))
+    .slice(-limit);
+
+  res.json({
+    count: candles.length,
+    materialized: true,
+    sourceTimeframe: "1m",
+    includeForming,
+    items: candles
+  });
+});
+
+app.get("/api/structure-candle-symbols", (req, res) => {
+  const markets = new Map();
+
+  for (const candle of getStructureCandlesForRead()) {
+    const symbol = normalizeCandleKeyValue(candle.symbol);
+    const timeframe = String(candle.timeframe || "").trim().toLowerCase();
+
+    if (!symbol || !timeframe) continue;
+
+    const key = `${symbol}|${timeframe}`;
+    const candleTime = new Date(candle.barTime || 0).getTime();
+    const existing = markets.get(key) || {
+      symbol,
+      timeframe,
+      count: 0,
+      closedCount: 0,
+      formingCount: 0,
+      firstBarTime: null,
+      lastBarTime: null
+    };
+
+    existing.count += 1;
+    if (candle.status === "closed") existing.closedCount += 1;
+    if (candle.status === "forming") existing.formingCount += 1;
+
+    if (
+      candle.barTime &&
+      (!existing.firstBarTime || candleTime < new Date(existing.firstBarTime || 0).getTime())
+    ) {
+      existing.firstBarTime = candle.barTime;
+    }
+
+    if (
+      candle.barTime &&
+      (!existing.lastBarTime || candleTime > new Date(existing.lastBarTime || 0).getTime())
+    ) {
+      existing.lastBarTime = candle.barTime;
+    }
+
+    markets.set(key, existing);
+  }
+
+  const items = Array.from(markets.values()).sort((a, b) => {
+    const symbolCompare = a.symbol.localeCompare(b.symbol);
+    if (symbolCompare !== 0) return symbolCompare;
+    return a.timeframe.localeCompare(b.timeframe);
+  });
+
+  res.json({
+    count: items.length,
+    symbols: [...new Set(items.map((item) => item.symbol))].sort(),
+    timeframes: STRUCTURE_TIMEFRAMES,
+    items
   });
 });
 

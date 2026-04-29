@@ -602,3 +602,41 @@ Boundary:
 - no tap-name direction inference
 - no reaction verdict rule change
 - no trade logic added
+
+## 2026-04-29 - Chart Structure Foundation Patch
+
+Implemented the first token-efficient Chart Structure slice by cloning Chart Lab instead of rebuilding a new chart surface from scratch.
+
+What changed:
+
+- added `/chartstructure`
+- added `public/chartstructure.html`
+- added `public/chartstructure.js`
+- reused the Chart Lab chart renderer, camera, pan/zoom, symbol selector, timeframe selector, and line/candle mode
+- kept Chart Lab unchanged as the candle/OB visual debug surface
+- Chart Structure now reads materialized candles directly instead of aggregating stored 1m candles in the browser
+
+Backend materialized candle behavior:
+
+- incoming `1m` `candle_details` still stores normal candles as before
+- after candle storage, the server rebuilds materialized candles for:
+  - `3m`
+  - `5m`
+  - `15m`
+  - `30m`
+  - `1h`
+  - `4h`
+- materialized candles are stored in ignored runtime data at `data/structure-candles.json`
+- each materialized candle includes `status: "forming"` or `status: "closed"`
+- materialized retention is 5000 candles per `symbol + timeframe`
+- first read can bootstrap materialized candles from existing stored 1m candles if the materialized file is empty
+
+New endpoints:
+
+- `GET /api/structure-candles`
+- `GET /api/structure-candle-symbols`
+
+Boundary:
+
+- no BOS/CHoCH, HH/HL/LH/LL, pullback/internal/swing, granddad/parent/child, OB overlay, AI, trade, or structure interpretation logic was added
+- Chart Structure is only the MTF candle memory/view foundation in this patch

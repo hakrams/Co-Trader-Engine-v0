@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chart Structure - Co-Trader Engine V2</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="chartlab-body">
+  <div class="chartlab-shell">
+    <header class="chartlab-topbar">
+      <div class="brand-block">
+        <p class="eyebrow">Co-Trader Engine V2</p>
+        <h1>Chart Structure</h1>
+      </div>
+
+      <div class="chartlab-actions">
+        <label class="select-control compact-control">
+          <span>Symbol</span>
+          <select id="chart-symbol"></select>
+        </label>
+        <label class="select-control compact-control">
+          <span>TF</span>
+          <select id="chart-timeframe">
+            <option value="3m">3M</option>
+            <option value="5m">5M</option>
+            <option value="15m">15M</option>
+            <option value="30m">30M</option>
+            <option value="1h">1H</option>
+            <option value="4h">4H</option>
+          </select>
+        </label>
+        <button id="chart-mode-toggle" class="topbar-link" type="button">Line Mode</button>
+        <button id="chart-refresh" class="primary-btn" type="button">Refresh</button>
+        <a class="topbar-link" href="/chartlab">Open Chart Lab</a>
+        <a class="topbar-link" href="/">Back to Market Story</a>
+      </div>
+    </header>
+
+    <main class="chartlab-main">
+      <section class="panel chart-panel chartlab-panel">
+        <div class="chart-toolbar">
+          <div>
+            <h3 id="chart-title">Waiting for candles</h3>
+            <p id="chart-summary" class="muted">Waiting for materialized MTF candles.</p>
+          </div>
+          <div class="chart-legend">
+            <span><i class="legend-up"></i>Bullish</span>
+            <span><i class="legend-down"></i>Bearish</span>
+            <span id="ob-overlay-count">Structure overlays: parked</span>
+          </div>
+        </div>
+        <div id="chart-viewport" class="chart-viewport">
+          <div id="chart-world">
+            <div id="candle-chart" class="candle-chart candle-chart-large empty-state">
+              No materialized structure candles recorded yet.
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/chartstructure.js"></script>
+</body>
+</html>
