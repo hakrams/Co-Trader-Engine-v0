@@ -493,3 +493,26 @@ Boundary:
 - OB tap alerts remain independent and immediate
 - final `direction` remains `unknown`
 - no trade decision, AI, breaker, fake/bait/real label, or reaction verdict behavior was added
+
+## 2026-04-29 - Candle Retention Patch
+
+Fixed candle storage capacity after discovering `data/candles.json` was capped globally at 5000 rows.
+
+New candle behavior:
+
+- candle retention is now 5000 rows per `symbol + timeframe`
+- old candles trimmed by retention are appended to `data/archive/candles-YYYY-MM-DD.jsonl`
+- `/api/candles` can now return up to 10000 rows
+- added `/api/candle-symbols` so Chart Lab can list symbols from all stored candle markets, not only the latest global candle slice
+- Chart Lab now asks for 5000 stored 1m candles for the selected symbol
+
+Reason:
+
+- 10 pairs on 1m produce 10 candles per minute
+- the old global 5000-row cap only preserved about 500 minutes across all pairs
+- symbols could disappear from Chart Lab because the dropdown used `/api/candles?limit=1000`
+
+Boundary:
+
+- no candle parsing format was changed
+- no OB logic, reaction logic, family map logic, or trading logic was changed

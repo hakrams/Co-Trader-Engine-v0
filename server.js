@@ -11,6 +11,9 @@ const FAMILY_MAP_RESET_PIN = "123456";
 const HISTORY_CLUES_FILE = path.join(__dirname, "data", "history-clues.json");
 const TREE_LAYOUT_FILE = path.join(__dirname, "data", "tree-layout.json");
 const CANDLES_FILE = path.join(__dirname, "data", "candles.json");
+const CANDLE_ARCHIVE_DIR = path.join(__dirname, "data", "archive");
+const CANDLE_RETENTION_PER_MARKET = 5000;
+const CANDLE_API_MAX_LIMIT = 10000;
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
@@ -97,6 +100,82 @@ function writeCandles(items) {
   fs.writeFileSync(CANDLES_FILE, JSON.stringify(items, null, 2));
 }
 
+function getCandleMarketKey(candle) {
+  return [
+    normalizeCandleKeyValue(candle?.symbol),
+    String(candle?.timeframe || "").trim().toLowerCase()
+  ].join("|");
+}
+
+function sortCandlesByMarketAndTime(candles) {
+  return (candles || []).slice().sort((a, b) => {
+    const symbolCompare = String(a.symbol || "").localeCompare(String(b.symbol || ""));
+    if (symbolCompare !== 0) return symbolCompare;
+    const timeframeCompare = String(a.timeframe || "").localeCompare(String(b.timeframe || ""));
+    if (timeframeCompare !== 0) return timeframeCompare;
+    return new Date(a.barTime || 0) - new Date(b.barTime || 0);
+  });
+}
+
+function archiveTrimmedCandles(trimmedCandles, reason = "candle_retention_rotation") {
+  if (!Array.isArray(trimmedCandles) || !trimmedCandles.length) {
+    return null;
+  }
+
+  fs.mkdirSync(CANDLE_ARCHIVE_DIR, { recursive: true });
+
+  const day = new Date().toISOString().slice(0, 10);
+  const archiveFile = path.join(CANDLE_ARCHIVE_DIR, `candles-${day}.jsonl`);
+  const archiveEntry = {
+    archivedAt: new Date().toISOString(),
+    reason,
+    count: trimmedCandles.length,
+    candles: trimmedCandles
+  };
+
+  fs.appendFileSync(archiveFile, `${JSON.stringify(archiveEntry)}\n`, "utf8");
+
+  return archiveFile;
+}
+
+function enforceCandleRetention(candles) {
+  const groups = new Map();
+
+  for (const candle of candles || []) {
+    const key = getCandleMarketKey(candle);
+
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+
+    groups.get(key).push(candle);
+  }
+
+  const kept = [];
+  const trimmed = [];
+
+  for (const groupCandles of groups.values()) {
+    const ordered = groupCandles
+      .slice()
+      .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
+    const trimCount = Math.max(0, ordered.length - CANDLE_RETENTION_PER_MARKET);
+
+    if (trimCount > 0) {
+      trimmed.push(...ordered.slice(0, trimCount));
+    }
+
+    kept.push(...ordered.slice(trimCount));
+  }
+
+  const archiveFile = archiveTrimmedCandles(trimmed);
+
+  return {
+    candles: sortCandlesByMarketAndTime(kept),
+    trimmedCount: trimmed.length,
+    archiveFile
+  };
+}
+
 function normalizeCandleKeyValue(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -158,19 +237,19 @@ function upsertCandle(parsed) {
     candles.push(candle);
   }
 
-  const ordered = candles
-    .sort((a, b) => {
-      const symbolCompare = String(a.symbol || "").localeCompare(String(b.symbol || ""));
-      if (symbolCompare !== 0) return symbolCompare;
-      const timeframeCompare = String(a.timeframe || "").localeCompare(String(b.timeframe || ""));
-      if (timeframeCompare !== 0) return timeframeCompare;
-      return new Date(a.barTime || 0) - new Date(b.barTime || 0);
-    })
-    .slice(-5000);
+  const retention = enforceCandleRetention(candles);
 
-  writeCandles(ordered);
+  writeCandles(retention.candles);
 
-  return { ok: true, candle };
+  return {
+    ok: true,
+    candle,
+    candleRetention: {
+      perMarketLimit: CANDLE_RETENTION_PER_MARKET,
+      trimmedCount: retention.trimmedCount,
+      archiveFile: retention.archiveFile
+    }
+  };
 }
 
 
@@ -1180,7 +1259,7 @@ app.get("/api/tree-layout", (req, res) => {
 app.get("/api/candles", (req, res) => {
   const symbol = normalizeCandleKeyValue(req.query.symbol || "");
   const timeframe = String(req.query.timeframe || "").trim().toLowerCase();
-  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 300));
+  const limit = Math.min(CANDLE_API_MAX_LIMIT, Math.max(1, Number(req.query.limit) || 300));
   const candles = readCandles()
     .filter((item) => {
       const symbolMatches = !symbol || normalizeCandleKeyValue(item.symbol) === symbol;
@@ -1193,6 +1272,57 @@ app.get("/api/candles", (req, res) => {
   res.json({
     count: candles.length,
     items: candles
+  });
+});
+
+app.get("/api/candle-symbols", (req, res) => {
+  const markets = new Map();
+
+  for (const candle of readCandles()) {
+    const symbol = normalizeCandleKeyValue(candle.symbol);
+    const timeframe = String(candle.timeframe || "").trim().toLowerCase();
+
+    if (!symbol || !timeframe) continue;
+
+    const key = `${symbol}|${timeframe}`;
+    const candleTime = new Date(candle.barTime || 0).getTime();
+    const existing = markets.get(key) || {
+      symbol,
+      timeframe,
+      count: 0,
+      firstBarTime: null,
+      lastBarTime: null
+    };
+
+    existing.count += 1;
+
+    if (
+      candle.barTime &&
+      (!existing.firstBarTime || candleTime < new Date(existing.firstBarTime || 0).getTime())
+    ) {
+      existing.firstBarTime = candle.barTime;
+    }
+
+    if (
+      candle.barTime &&
+      (!existing.lastBarTime || candleTime > new Date(existing.lastBarTime || 0).getTime())
+    ) {
+      existing.lastBarTime = candle.barTime;
+    }
+
+    markets.set(key, existing);
+  }
+
+  const items = Array.from(markets.values()).sort((a, b) => {
+    const symbolCompare = a.symbol.localeCompare(b.symbol);
+    if (symbolCompare !== 0) return symbolCompare;
+    return a.timeframe.localeCompare(b.timeframe);
+  });
+
+  res.json({
+    count: items.length,
+    symbols: [...new Set(items.map((item) => item.symbol))].sort(),
+    items
   });
 });
 

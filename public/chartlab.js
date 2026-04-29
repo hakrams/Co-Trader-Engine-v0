@@ -517,7 +517,7 @@ function renderChartLab() {
 
 async function loadCandles() {
   const { symbol, timeframe } = getChartFilters();
-  const params = new URLSearchParams({ limit: "500" });
+  const params = new URLSearchParams({ limit: "5000" });
 
   if (symbol) params.set("symbol", symbol);
   params.set("timeframe", "1m");
@@ -538,11 +538,11 @@ async function loadChartData() {
 }
 
 async function loadAvailableSymbols() {
-  const res = await fetch("/api/candles?limit=1000");
+  const res = await fetch("/api/candle-symbols");
   const data = await res.json();
-  const symbols = [...new Set((data.items || [])
-    .map((item) => String(item.symbol || "").trim().toUpperCase())
-    .filter(Boolean))]
+  const symbols = (data.symbols || [])
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter(Boolean)
     .sort();
   const select = document.getElementById("chart-symbol");
   const storedSymbol = localStorage.getItem("chartLabSymbol") || "";
