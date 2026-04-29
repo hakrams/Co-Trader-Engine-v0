@@ -468,3 +468,28 @@ Corrected the OB timing interpretation after live visual inspection:
 Boundary:
 
 - no tap matching, reactionWatch, reactionHistory, eyeOpener, OB range, final direction, trade decision, or test payload behavior was changed
+
+## 2026-04-29 - OB Zone Reconstruction Patch
+
+Corrected the OB model after confirming LuxAlgo alert OHLC can belong to the confirmation candle while the visual OB begins earlier.
+
+New model:
+
+- raw alert OHLC is preserved as `reportedRange` / `reportedOpen` / `reportedHigh` / `reportedLow` / `reportedClose`
+- raw alert `bar_time` is preserved as `confirmation_bar_time`
+- `zone_origin_time` is calculated from `confirmation_bar_time - 2 * timeframe`
+- BirthWatch mode is now `ob_zone_sequence`
+- the engine reconstructs 3 OB-zone candles from stored candles at the OB timeframe
+- stored 1m candles are aggregated when same-timeframe candles are not available
+- candle 1 high/low becomes the engine OB range
+- candle 1 OHLC is stored as `originCandle` and `engineOb*`
+- candles 2 and 3 are used only for provisional direction
+- provisional direction is bullish if candle 2 or 3 closes above candle 1 high
+- provisional direction is bearish if candle 2 or 3 closes below candle 1 low
+- mixed/no close outside candle 1 range remains low-confidence/unclear
+
+Boundary:
+
+- OB tap alerts remain independent and immediate
+- final `direction` remains `unknown`
+- no trade decision, AI, breaker, fake/bait/real label, or reaction verdict behavior was added

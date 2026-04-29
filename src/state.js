@@ -442,10 +442,16 @@ function normalizeObBoxRecord(box) {
   const alertTime = box.alert_time || box.alertTime || null;
   const confirmationBarTime =
     box.confirmation_bar_time || box.confirmationBarTime || barTime;
+  const calculatedZoneOriginTime = calculateZoneOriginTime(
+    confirmationBarTime,
+    alertTime,
+    timeframe
+  );
   const zoneOriginTime =
+    calculatedZoneOriginTime ||
     box.zoneOriginTime ||
     box.zone_origin_time ||
-    calculateZoneOriginTime(confirmationBarTime, alertTime, timeframe);
+    null;
 
   return {
     id: typeof box.id === "string" && box.id.trim() ? box.id.trim() : null,
@@ -462,6 +468,40 @@ function normalizeObBoxRecord(box) {
     low,
     open: Number.isFinite(Number(box.open)) ? Number(box.open) : null,
     close: Number.isFinite(Number(box.close)) ? Number(box.close) : null,
+    reportedOpen: Number.isFinite(Number(box.reportedOpen ?? box.reported_open))
+      ? Number(box.reportedOpen ?? box.reported_open)
+      : null,
+    reportedHigh: Number.isFinite(Number(box.reportedHigh ?? box.reported_high))
+      ? Number(box.reportedHigh ?? box.reported_high)
+      : null,
+    reportedLow: Number.isFinite(Number(box.reportedLow ?? box.reported_low))
+      ? Number(box.reportedLow ?? box.reported_low)
+      : null,
+    reportedClose: Number.isFinite(Number(box.reportedClose ?? box.reported_close))
+      ? Number(box.reportedClose ?? box.reported_close)
+      : null,
+    reportedRange:
+      box.reportedRange && typeof box.reportedRange === "object"
+        ? box.reportedRange
+        : null,
+    engineObOpen: Number.isFinite(Number(box.engineObOpen ?? box.engine_ob_open))
+      ? Number(box.engineObOpen ?? box.engine_ob_open)
+      : null,
+    engineObHigh: Number.isFinite(Number(box.engineObHigh ?? box.engine_ob_high))
+      ? Number(box.engineObHigh ?? box.engine_ob_high)
+      : null,
+    engineObLow: Number.isFinite(Number(box.engineObLow ?? box.engine_ob_low))
+      ? Number(box.engineObLow ?? box.engine_ob_low)
+      : null,
+    engineObClose: Number.isFinite(Number(box.engineObClose ?? box.engine_ob_close))
+      ? Number(box.engineObClose ?? box.engine_ob_close)
+      : null,
+    engineRangeSource: box.engineRangeSource || box.engine_range_source || null,
+    originCandle:
+      box.originCandle && typeof box.originCandle === "object"
+        ? box.originCandle
+        : null,
+    obZoneCandles: Array.isArray(box.obZoneCandles) ? box.obZoneCandles : [],
     volume: Number.isFinite(Number(box.volume)) ? Number(box.volume) : null,
     source_event: box.source_event || box.sourceEvent || "zone_created",
     raw_source_event: box.raw_source_event || box.rawSourceEvent || null,
@@ -521,14 +561,15 @@ function normalizeObBoxRecord(box) {
               box.birthWatch.confirmation_bar_time ||
               confirmationBarTime,
             zoneOriginTime:
-              box.birthWatch.zoneOriginTime ||
-              box.birthWatch.zone_origin_time ||
-              zoneOriginTime,
-            windowStart:
-              box.birthWatch.windowStart ||
-              box.birthWatch.zoneOriginTime ||
-              box.birthWatch.zone_origin_time ||
               zoneOriginTime ||
+              box.birthWatch.zoneOriginTime ||
+              box.birthWatch.zone_origin_time ||
+              null,
+            windowStart:
+              zoneOriginTime ||
+              box.birthWatch.zoneOriginTime ||
+              box.birthWatch.zone_origin_time ||
+              box.birthWatch.windowStart ||
               box.birthWatch.obBarTime ||
               barTime,
             alertTime: box.birthWatch.alertTime || alertTime,
@@ -2581,13 +2622,14 @@ function createBirthWatch(obBox) {
     calculateZoneOriginTime(confirmationBarTime, obBox.alert_time, obBox.timeframe);
   const windowStart = zoneOriginTime || confirmationBarTime || now;
   const windowEnd =
+    addTimeframeCandles(windowStart, obBox.timeframe, 3) ||
     obBox.alert_time ||
     obBox.received_at ||
     obBox.created_at ||
     now;
 
   return {
-    mode: "confirmation_window",
+    mode: "ob_zone_sequence",
     startedAt: now,
     obBarTime: confirmationBarTime || windowStart,
     confirmationBarTime,
@@ -2596,7 +2638,8 @@ function createBirthWatch(obBox) {
     windowStart,
     windowEnd,
     candlesCollected: [],
-    requiredCandles: null,
+    originCandle: null,
+    requiredCandles: 3,
     status: "pending_missing_candles",
     provisionalDirection: null,
     confidence: "none",
@@ -2629,9 +2672,15 @@ function calculateZoneOriginTime(confirmationBarTime, alertTime, timeframe) {
     ? new Date(confirmationBarTime).getTime()
     : NaN;
   const minutes = getTimeframeMinutes(timeframe);
+  const timeframeMs = minutes ? minutes * 60 * 1000 : null;
 
-  if (Number.isFinite(alertMs) && minutes) {
-    return new Date(alertMs - minutes * 3 * 60 * 1000).toISOString();
+  if (Number.isFinite(confirmationMs) && timeframeMs) {
+    return new Date(confirmationMs - timeframeMs * 2).toISOString();
+  }
+
+  if (Number.isFinite(alertMs) && timeframeMs) {
+    const originMs = alertMs - timeframeMs * 3;
+    return new Date(Math.floor(originMs / timeframeMs) * timeframeMs).toISOString();
   }
 
   if (Number.isFinite(confirmationMs)) {
@@ -2639,6 +2688,78 @@ function calculateZoneOriginTime(confirmationBarTime, alertTime, timeframe) {
   }
 
   return null;
+}
+
+function addTimeframeCandles(isoString, timeframe, candleCount) {
+  const baseMs = new Date(isoString || 0).getTime();
+  const minutes = getTimeframeMinutes(timeframe);
+
+  if (!Number.isFinite(baseMs) || !minutes) {
+    return null;
+  }
+
+  return new Date(baseMs + minutes * candleCount * 60 * 1000).toISOString();
+}
+
+function aggregateBirthCandles(candles, symbol, timeframe, bucketStart) {
+  const minutes = getTimeframeMinutes(timeframe);
+  const startMs = new Date(bucketStart || 0).getTime();
+
+  if (!minutes || !Number.isFinite(startMs)) {
+    return null;
+  }
+
+  const endMs = startMs + minutes * 60 * 1000;
+  const normalized = (candles || [])
+    .map(normalizeBirthCandleRecord)
+    .filter((candle) => candle && candle.symbol === symbol);
+
+  const sameTimeframe = normalized.find((candle) => {
+    return candle.timeframe === timeframe && new Date(candle.barTime || 0).getTime() === startMs;
+  });
+
+  if (sameTimeframe) {
+    return {
+      ...sameTimeframe,
+      barTime: new Date(startMs).toISOString(),
+      source: "same_tf_ob_zone_sequence"
+    };
+  }
+
+  const oneMinuteCandles = normalized
+    .filter((candle) => {
+      const candleMs = new Date(candle.barTime || 0).getTime();
+
+      return (
+        candle.timeframe === "1m" &&
+        Number.isFinite(candleMs) &&
+        candleMs >= startMs &&
+        candleMs < endMs
+      );
+    })
+    .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
+
+  if (!oneMinuteCandles.length) {
+    return null;
+  }
+
+  return {
+    symbol,
+    exchange: oneMinuteCandles[0].exchange || null,
+    timeframe,
+    barTime: new Date(startMs).toISOString(),
+    alertTime: oneMinuteCandles[oneMinuteCandles.length - 1].alertTime || null,
+    receivedAt: oneMinuteCandles[oneMinuteCandles.length - 1].receivedAt || null,
+    open: oneMinuteCandles[0].open,
+    high: Math.max(...oneMinuteCandles.map((candle) => candle.high)),
+    low: Math.min(...oneMinuteCandles.map((candle) => candle.low)),
+    close: oneMinuteCandles[oneMinuteCandles.length - 1].close,
+    volume: oneMinuteCandles.some((candle) => Number.isFinite(Number(candle.volume)))
+      ? oneMinuteCandles.reduce((sum, candle) => sum + Number(candle.volume || 0), 0)
+      : null,
+    source: "stored_1m_ob_zone_sequence",
+    sourceCandleCount: oneMinuteCandles.length
+  };
 }
 
 function normalizeBirthCandleRecord(candle) {
@@ -2687,7 +2808,9 @@ function getBirthWatchWindow(watch, obBox) {
     watch?.obBarTime ||
     obBox?.bar_time ||
     null;
+  const calculatedWindowEnd = addTimeframeCandles(windowStart, obBox?.timeframe, 3);
   const windowEnd =
+    calculatedWindowEnd ||
     watch?.windowEnd ||
     watch?.alertTime ||
     obBox?.alert_time ||
@@ -2702,11 +2825,9 @@ function getBirthWatchWindow(watch, obBox) {
 }
 
 function getBirthCandleSource(timeframe) {
-  if (timeframe === "1m") {
-    return "stored_1m_confirmation_window";
-  }
-
-  return "same_tf_confirmation_window";
+  return timeframe === "1m"
+    ? "stored_1m_ob_zone_sequence"
+    : "same_tf_ob_zone_sequence";
 }
 
 function calculateExpectedBirthCandles(windowStart, windowEnd, timeframe) {
@@ -2731,37 +2852,39 @@ function selectBirthConfirmationCandles(obBox, candles) {
     return {
       candles: [],
       candleSource: null,
-      requiredCandles: null
+      requiredCandles: 3,
+      originCandle: null
     };
   }
 
-  const matching = (candles || [])
-    .map(normalizeBirthCandleRecord)
-    .filter((candle) => {
-      if (!candle) return false;
+  const timeframeMinutes = getTimeframeMinutes(obBox.timeframe);
+  if (!timeframeMinutes) {
+    return {
+      candles: [],
+      candleSource: null,
+      requiredCandles: 3,
+      originCandle: null
+    };
+  }
 
-      const candleMs = new Date(candle.barTime || 0).getTime();
-
-      return (
-        candle.symbol === obBox.symbol &&
-        Number.isFinite(candleMs) &&
-        candleMs >= startMs &&
-        candleMs < endMs
-      );
-    })
-    .sort((a, b) => new Date(a.barTime || 0) - new Date(b.barTime || 0));
-
-  const oneMinuteCandles = matching.filter((candle) => candle.timeframe === "1m");
-  const sameTimeframeCandles = matching.filter((candle) => candle.timeframe === obBox.timeframe);
-  const selected = oneMinuteCandles.length ? oneMinuteCandles : sameTimeframeCandles;
-  const selectedTimeframe = oneMinuteCandles.length ? "1m" : obBox.timeframe;
+  const bucketStarts = [0, 1, 2].map((offset) => {
+    return new Date(startMs + offset * timeframeMinutes * 60 * 1000).toISOString();
+  });
+  const selected = bucketStarts
+    .map((bucketStart) => aggregateBirthCandles(candles, obBox.symbol, obBox.timeframe, bucketStart))
+    .filter(Boolean);
+  const usesOneMinute = selected.some((candle) => candle.source === "stored_1m_ob_zone_sequence");
+  const candleSource = usesOneMinute
+    ? "stored_1m_ob_zone_sequence"
+    : selected.length
+      ? "same_tf_ob_zone_sequence"
+      : null;
 
   return {
     candles: selected,
-    candleSource: selected.length ? getBirthCandleSource(selectedTimeframe) : null,
-    requiredCandles: selected.length
-      ? calculateExpectedBirthCandles(windowStart, windowEnd, selectedTimeframe)
-      : null
+    candleSource,
+    requiredCandles: 3,
+    originCandle: selected[0] || null
   };
 }
 
@@ -2769,51 +2892,51 @@ function inferBirthDirection(obBox, candlesCollected) {
   const candles = (candlesCollected || []).slice().sort((a, b) => {
     return new Date(a.barTime || 0) - new Date(b.barTime || 0);
   });
-  const firstOpen = Number(candles[0]?.open);
-  const windowClose = Number(candles[candles.length - 1]?.close);
-  const highs = candles.map((candle) => Number(candle.high));
-  const lows = candles.map((candle) => Number(candle.low));
-  const maxHigh = Math.max(...highs);
-  const minLow = Math.min(...lows);
-  const obHigh = Number(obBox.high);
-  const obLow = Number(obBox.low);
+  const originCandle = candles[0] || null;
+  const originHigh = Number(originCandle?.high);
+  const originLow = Number(originCandle?.low);
+  const confirmationCandles = candles.slice(1);
+  const closes = confirmationCandles.map((candle) => Number(candle.close));
+  const closedAboveZone = closes.some((close) => Number.isFinite(close) && close > originHigh);
+  const closedBelowZone = closes.some((close) => Number.isFinite(close) && close < originLow);
 
-  if (
-    Number.isFinite(firstOpen) &&
-    Number.isFinite(windowClose) &&
-    windowClose > firstOpen
-  ) {
-    const confirmedHigh = Number.isFinite(maxHigh) && Number.isFinite(obHigh) && maxHigh >= obHigh;
-
+  if (closedAboveZone && !closedBelowZone) {
     return {
       provisionalDirection: "bullish",
       confidence: "medium",
-      reason: confirmedHigh
-        ? "confirmation_window_closed_up_confirmed_zone_high"
-        : "confirmation_window_closed_up"
+      reason: "ob_zone_confirmation_closed_above_origin_high"
+    };
+  }
+
+  if (closedBelowZone && !closedAboveZone) {
+    return {
+      provisionalDirection: "bearish",
+      confidence: "medium",
+      reason: "ob_zone_confirmation_closed_below_origin_low"
     };
   }
 
   if (
-    Number.isFinite(firstOpen) &&
-    Number.isFinite(windowClose) &&
-    windowClose < firstOpen
+    closedAboveZone &&
+    closedBelowZone &&
+    Number.isFinite(closes[closes.length - 1])
   ) {
-    const confirmedLow = Number.isFinite(minLow) && Number.isFinite(obLow) && minLow <= obLow;
-
     return {
-      provisionalDirection: "bearish",
-      confidence: "medium",
-      reason: confirmedLow
-        ? "confirmation_window_closed_down_confirmed_zone_low"
-        : "confirmation_window_closed_down"
+      provisionalDirection:
+        closes[closes.length - 1] > originHigh
+          ? "bullish"
+          : closes[closes.length - 1] < originLow
+            ? "bearish"
+            : "unclear",
+      confidence: "low",
+      reason: "ob_zone_confirmation_mixed_closes"
     };
   }
 
   return {
     provisionalDirection: "unclear",
     confidence: "low",
-    reason: "confirmation_window_no_clear_displacement"
+    reason: "ob_zone_confirmation_no_close_outside_origin_zone"
   };
 }
 
@@ -2824,9 +2947,10 @@ function applyBirthWatchResult(obBox, selectedCandles, candleSource, requiredCan
   const hasEnoughCandles =
     candlesCollected.length > 0 &&
     (!requiredCandles || candlesCollected.length >= requiredCandles);
+  const originCandle = candlesCollected[0] || null;
   const nextWatch = {
     ...watch,
-    mode: "confirmation_window",
+    mode: "ob_zone_sequence",
     obBarTime: obBox.confirmation_bar_time || obBox.bar_time || watch.obBarTime || null,
     confirmationBarTime:
       obBox.confirmation_bar_time ||
@@ -2842,6 +2966,7 @@ function applyBirthWatchResult(obBox, selectedCandles, candleSource, requiredCan
     windowStart,
     windowEnd,
     candlesCollected,
+    originCandle,
     requiredCandles,
     candleSource,
     status: hasEnoughCandles ? "complete" : "pending_missing_candles"
@@ -2863,9 +2988,20 @@ function applyBirthWatchResult(obBox, selectedCandles, candleSource, requiredCan
 
   return {
     ...obBox,
+    high: Number.isFinite(Number(originCandle?.high)) ? Number(originCandle.high) : obBox.high,
+    low: Number.isFinite(Number(originCandle?.low)) ? Number(originCandle.low) : obBox.low,
+    open: Number.isFinite(Number(originCandle?.open)) ? Number(originCandle.open) : obBox.open,
+    close: Number.isFinite(Number(originCandle?.close)) ? Number(originCandle.close) : obBox.close,
+    engineObHigh: Number.isFinite(Number(originCandle?.high)) ? Number(originCandle.high) : null,
+    engineObLow: Number.isFinite(Number(originCandle?.low)) ? Number(originCandle.low) : null,
+    engineObOpen: Number.isFinite(Number(originCandle?.open)) ? Number(originCandle.open) : null,
+    engineObClose: Number.isFinite(Number(originCandle?.close)) ? Number(originCandle.close) : null,
+    engineRangeSource: candleSource || "ob_zone_sequence",
+    originCandle,
+    obZoneCandles: candlesCollected,
     provisionalDirection: directionResult.provisionalDirection,
     directionConfidence: directionResult.confidence,
-    directionSource: "birth_confirmation_window",
+    directionSource: "ob_zone_sequence",
     birthWatch: {
       ...nextWatch,
       provisionalDirection: directionResult.provisionalDirection,
@@ -2940,6 +3076,26 @@ function storeObBoxFromEvent(parsed, storedCandles = []) {
     low: range.low,
     open: Number.isFinite(price.open) ? price.open : null,
     close: Number.isFinite(price.close) ? price.close : null,
+    reportedOpen: Number.isFinite(price.open) ? price.open : null,
+    reportedHigh: range.high,
+    reportedLow: range.low,
+    reportedClose: Number.isFinite(price.close) ? price.close : null,
+    reportedRange: {
+      open: Number.isFinite(price.open) ? price.open : null,
+      high: range.high,
+      low: range.low,
+      close: Number.isFinite(price.close) ? price.close : null,
+      source: "luxalgo_alert",
+      barTime: normalizedBarTime,
+      alertTime
+    },
+    engineObOpen: null,
+    engineObHigh: null,
+    engineObLow: null,
+    engineObClose: null,
+    engineRangeSource: null,
+    originCandle: null,
+    obZoneCandles: [],
     volume: Number.isFinite(event.volume) ? event.volume : null,
     source_event: "zone_created",
     raw_source_event: event.event_raw || null,
