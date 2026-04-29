@@ -1119,8 +1119,9 @@ app.post("/webhook", (req, res) => {
 
     if (parsed.normalized.event_type === "candle_details") {
       const candleResult = upsertCandle(parsed);
+      const storedCandles = candleResult.ok ? readCandles() : [];
       const birthResult = state.observeObBirthFromCandle(parsed);
-      const reactionResult = state.observeObReactionFromCandle(parsed);
+      const reactionResult = state.observeObReactionFromCandle(parsed, storedCandles);
 
       if (!candleResult.ok) {
         return res.status(400).json(candleResult);

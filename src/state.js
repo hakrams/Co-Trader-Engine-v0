@@ -3679,7 +3679,81 @@ function applyReactionVerdict(obBox, candle) {
   };
 }
 
-function observeObReactionFromCandle(parsed) {
+function getCompletedReactionCandles(box, triggerCandle, storedCandles) {
+  const watch = box?.reactionWatch;
+  const timeframeMinutes = getTimeframeMinutes(box?.timeframe);
+  const timeframeMs = timeframeMinutes ? timeframeMinutes * 60 * 1000 : null;
+  const tapMs = new Date(watch?.tapBarTime || 0).getTime();
+  const triggerMs = new Date(triggerCandle?.barTime || 0).getTime();
+  const maxCandles = Number(watch?.maxCandles || 10);
+  const existingCandles = Array.isArray(watch?.candlesCollected)
+    ? watch.candlesCollected
+    : [];
+  const existingTimes = new Set(existingCandles.map((item) => item.barTime));
+
+  if (
+    !timeframeMs ||
+    !Number.isFinite(tapMs) ||
+    !Number.isFinite(triggerMs) ||
+    triggerCandle.symbol !== box.symbol
+  ) {
+    return [];
+  }
+
+  if (triggerCandle.timeframe === box.timeframe) {
+    const candleMs = new Date(triggerCandle.barTime || 0).getTime();
+
+    if (candleMs >= tapMs && !existingTimes.has(triggerCandle.barTime)) {
+      return [triggerCandle];
+    }
+
+    return [];
+  }
+
+  const firstBucketMs = Math.floor(tapMs / timeframeMs) * timeframeMs;
+  const latestBucketMs = Math.floor(triggerMs / timeframeMs) * timeframeMs;
+  const nextCandles = [];
+
+  for (
+    let bucketMs = firstBucketMs;
+    bucketMs <= latestBucketMs && existingCandles.length + nextCandles.length < maxCandles;
+    bucketMs += timeframeMs
+  ) {
+    const bucketStart = new Date(bucketMs).toISOString();
+
+    if (existingTimes.has(bucketStart)) {
+      continue;
+    }
+
+    const aggregated = aggregateBirthCandles(
+      storedCandles,
+      box.symbol,
+      box.timeframe,
+      bucketStart
+    );
+
+    if (!aggregated) {
+      continue;
+    }
+
+    const isCompleteOneMinuteBucket =
+      aggregated.source !== "stored_1m_ob_zone_sequence" ||
+      Number(aggregated.sourceCandleCount || 0) >= timeframeMinutes;
+
+    if (isCompleteOneMinuteBucket) {
+      nextCandles.push({
+        ...aggregated,
+        source: aggregated.source === "stored_1m_ob_zone_sequence"
+          ? "stored_1m_reaction_window"
+          : "same_tf_reaction_window"
+      });
+    }
+  }
+
+  return nextCandles;
+}
+
+function observeObReactionFromCandle(parsed, storedCandles = []) {
   const candle = buildReactionCandle(parsed);
 
   if (!candle) {
@@ -3701,8 +3775,7 @@ function observeObReactionFromCandle(parsed) {
       watch.status === "complete" ||
       watch.status === "max_window_liquidity_engineering" ||
       box.symbol !== candle.symbol ||
-      box.timeframe !== candle.timeframe ||
-      new Date(candle.barTime).getTime() <= new Date(watch.tapBarTime).getTime()
+      new Date(candle.barTime).getTime() < new Date(watch.tapBarTime).getTime()
     ) {
       return box;
     }
@@ -3712,25 +3785,62 @@ function observeObReactionFromCandle(parsed) {
       ? watch.candlesCollected
       : [];
 
-    if (candlesCollected.some((item) => item.barTime === candle.barTime)) {
+    const completedReactionCandles = getCompletedReactionCandles(
+      box,
+      candle,
+      storedCandles
+    );
+
+    if (!completedReactionCandles.length) {
+      return box;
+    }
+
+    let nextBox = box;
+    let nextCandles = candlesCollected;
+
+    for (const reactionCandle of completedReactionCandles) {
+      if (nextCandles.some((item) => item.barTime === reactionCandle.barTime)) {
+        continue;
+      }
+
+      nextCandles = [...nextCandles, reactionCandle].slice(0, maxCandles);
+
+      nextBox = applyReactionVerdict(
+        {
+          ...nextBox,
+          reactionWatch: {
+            ...nextBox.reactionWatch,
+            candlesCollected: nextCandles
+          },
+          updated_at: new Date().toISOString()
+        },
+        reactionCandle
+      );
+
+      if (
+        nextBox.reactionWatch?.status === "complete" ||
+        nextBox.reactionWatch?.status === "max_window_liquidity_engineering"
+      ) {
+        break;
+      }
+    }
+
+    if (nextCandles.length === candlesCollected.length) {
       return box;
     }
 
     const nextWatch = {
-      ...watch,
-      candlesCollected: [...candlesCollected, candle].slice(0, maxCandles)
+      ...nextBox.reactionWatch,
+      candlesCollected: nextCandles
     };
 
     updated += 1;
 
-    return applyReactionVerdict(
-      {
-        ...box,
-        reactionWatch: nextWatch,
-        updated_at: new Date().toISOString()
-      },
-      candle
-    );
+    return {
+      ...nextBox,
+      reactionWatch: nextWatch,
+      updated_at: new Date().toISOString()
+    };
   });
 
   if (updated > 0) {

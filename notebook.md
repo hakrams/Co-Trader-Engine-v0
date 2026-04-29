@@ -516,3 +516,89 @@ Boundary:
 
 - no candle parsing format was changed
 - no OB logic, reaction logic, family map logic, or trading logic was changed
+
+## 2026-04-29 - Chart Structure / Materialized MTF Candle Plan
+
+Architecture decision:
+
+- Keep Chart Lab as the current candle/OB visual debug tool.
+- Clone Chart Lab into a separate view named Chart Structure.
+- Chart Structure will focus on MTF/HTF structure, not raw visual debugging.
+- Do not keep relying on short-lived 1m candles to rebuild all higher timeframes at render time.
+- Instead, materialize and store candles per symbol/timeframe.
+
+Why:
+
+- Current 3m/5m/15m/30m/1h/4h candles are generated from stored 1m candles.
+- If 1m candles are trimmed, higher timeframe history disappears too.
+- 5000 1m candles is only about 3.5 days.
+- 5000 4h candles is about 833 days.
+- Materialized MTF candles give the engine long HTF memory for BOS/CHoCH and HH/HL/LH/LL structure.
+
+Target timeframes:
+
+- 3m
+- 5m
+- 15m
+- 30m
+- 1h
+- 4h
+
+Backend concept:
+
+- every incoming 1m candle is stored as normal
+- the same 1m candle updates materialized MTF candle buckets
+- each materialized candle has `status: forming | closed`
+- structure logic must use only closed materialized candles
+- Chart Structure may display the forming candle visually if useful
+- each symbol/timeframe gets its own retention window
+
+Chart Structure concept:
+
+- clone Chart Lab UI/rendering to reduce rebuild effort
+- read materialized candles directly from a new endpoint
+- show MTF candles for the selected pair/timeframe
+- later add structure overlays: internal BOS/CHoCH, swing BOS/CHoCH, HH/HL/LH/LL
+- keep Chart Lab unchanged except for necessary shared helpers
+
+Important structure model:
+
+- structure scopes must be separate: pullback, internal, swing
+- LuxAlgo alerts can identify internal vs swing structure event types
+- alert event confirms a break at candle close
+- stored candles are needed to locate the broken structural high/low
+- do not mix pullback/internal/swing into one BOS/CHoCH bucket
+
+## 2026-04-29 - Reaction Watch Aggregated Candle Patch
+
+Fixed tapped OBs staying stuck at `tapped_pending_reaction` with `0` reaction candles.
+
+Problem:
+
+- tap alerts correctly started `reactionWatch`
+- live candle feed mainly sends 1m `candle_details`
+- OBs are often 3m
+- reactionWatch required `box.timeframe === candle.timeframe`
+- therefore 3m OB reaction watches ignored the 1m stream and never collected closed 3m reaction candles
+
+New behavior:
+
+- tap alert still only starts reaction observation
+- on each incoming 1m candle, the engine reads stored candles
+- reactionWatch aggregates completed OB-timeframe candles from stored 1m candles
+- aggregated reaction candles are fed into existing verdict rules
+- tap bucket can be included when the tap happens inside that candle
+- duplicate reaction candle buckets are ignored
+
+Expected result:
+
+- bullish basis invalidates when a completed OB-timeframe candle closes below OB low
+- bearish basis invalidates when a completed OB-timeframe candle closes above OB high
+- tapped state becomes historical clue, not the final verdict
+
+Boundary:
+
+- no tap matching change
+- no tap-name direction inference
+- no reaction verdict rule change
+- no trade logic added
